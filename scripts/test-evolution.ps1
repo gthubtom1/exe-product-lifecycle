@@ -153,6 +153,14 @@ try {
     if ($indexText -match '"\w+":  ') { throw 'Knowledge index uses the host ConvertTo-Json spacing, so it is not reproducible across PowerShell versions' }
     if ($indexText -notmatch '(?m)^  "schema_version": 1,') { throw 'Knowledge index is not in the canonical two-space form' }
     [void]$passes.Add('host_independent_index')
+
+    # generated_at and each entry's updated_at must stay the literal ISO string. PowerShell 7's
+    # ConvertFrom-Json coerces an ISO string into [DateTime], and [string] then renders it in the
+    # host culture ("08/12/2026 05:56:24"); on that lane the committed index and the regenerated one
+    # diverge and "generated files are committed" fails. A US-style date in the index means the
+    # coercion is back -- the index must read timestamps from the raw record text, not the object.
+    if ($indexText -match '"(?:generated_at|updated_at)":\s*"\d{1,2}/\d{1,2}/\d{2,4}') { throw 'Knowledge index timestamps were reformatted by the host culture; they must stay the literal ISO string' }
+    [void]$passes.Add('host_independent_timestamps')
     Write-Output "RESULT: passed ($($passes.Count) evolution checks)"
     foreach ($pass in $passes) { Write-Output "PASS: $pass" }
 }

@@ -350,6 +350,15 @@ function Update-KnowledgeIndex {
         $folder = Join-Path $knowledge $folderName
         foreach ($file in @(Get-ChildItem -LiteralPath $folder -File -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object Name)) {
             $record = Read-JsonFile -Path $file.FullName
+            # updated_at is taken from the raw file text, not the parsed object. PowerShell 7's
+            # ConvertFrom-Json coerces an ISO-8601 string into [DateTime], and [string] then renders
+            # it in the host's culture ("08/12/2026 05:56:24"), while Windows PowerShell 5.1 keeps
+            # the original string. That made the index written on 5.1 differ from the index
+            # regenerated on the pwsh 7 lane, so "generated files are committed" could never pass.
+            # The file bytes are identical on both hosts, so the literal string is host-independent.
+            $rawRecordText = Get-Content -Raw -Encoding UTF8 -LiteralPath $file.FullName
+            $updatedAtMatch = [regex]::Match($rawRecordText, '"updated_at"\s*:\s*"([^"]+)"')
+            $updatedAt = if ($updatedAtMatch.Success) { $updatedAtMatch.Groups[1].Value } else { [string]$record.updated_at }
             [void]$entries.Add([ordered]@{
                 experience_id = [string]$record.experience_id
                 status = [string]$record.status
@@ -358,7 +367,7 @@ function Update-KnowledgeIndex {
                 tags = @($record.tags)
                 path = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
                 sha256 = Get-Sha256 -Path $file.FullName
-                updated_at = [string]$record.updated_at
+                updated_at = $updatedAt
             })
         }
     }
