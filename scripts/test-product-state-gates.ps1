@@ -368,3 +368,8 @@ if (-not $KeepFixture -and (Test-Path -LiteralPath $FixtureRoot -PathType Contai
     Remove-Item -LiteralPath $FixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($failed.Count -gt 0) { exit 1 }
+# Explicit, because several scenarios deliberately run a script that exits non-zero and the last
+# one of those leaves $LASTEXITCODE set. Launched with -File that is harmless, but CI runs this as
+# `pwsh -command ". 'file'"`, where the leftover code becomes the step's result -- which reported
+# a failing step directly under a line saying every assertion passed.
+exit 0
