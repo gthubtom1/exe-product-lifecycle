@@ -146,3 +146,8 @@ try {
 finally {
     if ((Test-Path -LiteralPath $preserveTemp -PathType Container) -and $preserveTemp.StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $preserveTemp -Recurse -Force }
 }
+
+# Explicit, because the refusal scenario above deliberately runs a script that exits non-zero and
+# leaves $LASTEXITCODE set. Launched with -File that is harmless; CI runs this as
+# `pwsh -command ". 'file'"`, where the leftover code becomes the step's result.
+exit 0
