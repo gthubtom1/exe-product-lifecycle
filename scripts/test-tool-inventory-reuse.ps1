@@ -228,10 +228,16 @@ $reuseAfter = Invoke-Discover -Root $p14 -ExtraArgs @('-ReuseInventory')
 Add-Result -Id 'R14-stable-file-reuses' -Expected 'applied' -Actual (Get-Key $reuseAfter 'reuse')
 
 # R15 every fixed drive is in scope. Hard-coding C: made a machine that keeps its toolchain on
-# another drive report tools it actually has as not installed.
+# another drive report tools it actually has as not installed. Assert on the drives discovery
+# probed, not on the drives that survived into the search roots: a drive that holds none of the
+# conventional tool folder names contributes no root, and that is correct behaviour rather than a
+# skipped drive. Asserting on the survivors made this red on any machine with an empty second
+# drive -- a property of that machine's disks, not of the code under test.
 $driveCount = @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady }).Count
+Add-Result -Id 'R15-all-fixed-drives-probed' -Expected ([string]$driveCount) -Actual (Get-Key $cold 'probeddrives')
 $reportedDrives = @((Get-Key $cold 'searchdrives') -split ',' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
-Add-Result -Id 'R15-all-fixed-drives-searched' -Expected ([string]$driveCount) -Actual ([string]$reportedDrives)
+$withinFixed = if ($reportedDrives -ge 1 -and $reportedDrives -le $driveCount) { 'yes' } else { 'no' }
+Add-Result -Id 'R15-searched-drives-within-fixed' -Expected 'yes' -Actual $withinFixed
 
 ''
 $failed = @($script:Results | Where-Object { $_.Status -eq 'FAIL' })

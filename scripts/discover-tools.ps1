@@ -100,6 +100,10 @@ function Test-PrunedDirectory {
     return $false
 }
 
+# Zero until the search roots are actually built: a reused inventory probes no drive at all, and
+# reporting a recomputed count there would claim work that this run did not do.
+$script:ProbedDriveCount = 0
+
 function Get-FixedDriveRoot {
     $roots = New-Object System.Collections.Generic.List[string]
     try {
@@ -192,7 +196,9 @@ function Get-DiscoverySearchRoot {
         'Tools', 'tool', 'Apps', 'App', 'bin', 'opt', 'dev', 'Dev', 'SDK', 'sdk',
         '开发', '软件', '工具', 'RE', 'Reverse', 'Security', 'green', '绿色软件'
     )
-    foreach ($drive in @(Get-FixedDriveRoot)) {
+    $probedDriveRoots = @(Get-FixedDriveRoot)
+    $script:ProbedDriveCount = $probedDriveRoots.Count
+    foreach ($drive in $probedDriveRoots) {
         foreach ($name in $toolFolderNames) {
             Add-SearchRoot -Path (Join-Path $drive $name) -Depth $DefaultDepth
         }
@@ -684,6 +690,10 @@ Write-InventoryFile -Path $jsonPath -Content (([pscustomobject]@{
 "verified_at=$($verifiedAt.ToString('o'))"
 "searchroots=$searchedRootCount"
 "searchdrives=$($searchedDrives -join ',')"
+# Probed is not the same as searched: a fixed drive holding none of the conventional tool folder
+# names contributes no search root, which is correct. Reporting both is what lets a regression
+# test tell "we never looked at that drive" apart from "we looked and there was nothing there".
+"probeddrives=$script:ProbedDriveCount"
 "languages=$($languagesAvailable -join ',')"
 "deepscan=$(if ($DeepScan) { 'yes' } else { 'no' })"
 "extrarootfiles=$($resolvedExtraRootFiles.Count)"

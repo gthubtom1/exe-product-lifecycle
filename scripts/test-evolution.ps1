@@ -144,6 +144,15 @@ try {
     $secondIndexHash = (Get-FileHash -LiteralPath $indexPath -Algorithm SHA256).Hash
     if ($firstIndexHash -ne $secondIndexHash) { throw 'Knowledge index is not deterministic' }
     [void]$passes.Add('deterministic_index')
+
+    # Same input, same bytes, on either host. ConvertTo-Json is not the same function in Windows
+    # PowerShell 5.1 and PowerShell 7 -- 5.1 writes `"key":  1` with a four-space indent -- so a
+    # committed generated file regenerated on the other host rewrites every byte and the CI step
+    # that checks generated files are committed can never pass. Pin the shape, not just stability.
+    $indexText = Get-Content -Raw -Encoding UTF8 -LiteralPath $indexPath
+    if ($indexText -match '"\w+":  ') { throw 'Knowledge index uses the host ConvertTo-Json spacing, so it is not reproducible across PowerShell versions' }
+    if ($indexText -notmatch '(?m)^  "schema_version": 1,') { throw 'Knowledge index is not in the canonical two-space form' }
+    [void]$passes.Add('host_independent_index')
     Write-Output "RESULT: passed ($($passes.Count) evolution checks)"
     foreach ($pass in $passes) { Write-Output "PASS: $pass" }
 }

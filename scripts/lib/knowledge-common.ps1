@@ -12,6 +12,71 @@ function Read-JsonFile {
     catch { throw "Invalid JSON: $Path`n$($_.Exception.Message)" }
 }
 
+function ConvertTo-CanonicalJsonString {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+    foreach ($char in $Value.ToCharArray()) {
+        $code = [int]$char
+        if ($char -eq '"') { [void]$builder.Append('\"') }
+        elseif ($char -eq '\') { [void]$builder.Append('\\') }
+        elseif ($code -eq 8) { [void]$builder.Append('\b') }
+        elseif ($code -eq 9) { [void]$builder.Append('\t') }
+        elseif ($code -eq 10) { [void]$builder.Append('\n') }
+        elseif ($code -eq 12) { [void]$builder.Append('\f') }
+        elseif ($code -eq 13) { [void]$builder.Append('\r') }
+        elseif ($code -lt 32) { [void]$builder.Append(('\u{0:x4}' -f $code)) }
+        else { [void]$builder.Append($char) }
+    }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function ConvertTo-CanonicalJson {
+    param($Value, [int]$Depth = 0)
+
+    # ConvertTo-Json is not the same function on both hosts: Windows PowerShell 5.1 emits
+    # `"key":  1` with a four-space indent, PowerShell 7 emits `"key": 1` with two. The knowledge
+    # index is a committed generated file, so whichever host regenerates it rewrites every byte and
+    # the "generated files are committed" gate can never pass on the other one. Emit the bytes here
+    # instead of asking the host to, so the same input is the same file everywhere.
+    $pad = ' ' * (2 * $Depth)
+    $padInner = ' ' * (2 * ($Depth + 1))
+    if ($null -eq $Value) { return 'null' }
+    if ($Value -is [bool]) { if ($Value) { return 'true' } else { return 'false' } }
+    if ($Value -is [string]) { return (ConvertTo-CanonicalJsonString -Value $Value) }
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [int16] -or $Value -is [byte]) {
+        return $Value.ToString([Globalization.CultureInfo]::InvariantCulture)
+    }
+    if ($Value -is [double] -or $Value -is [single] -or $Value -is [decimal]) {
+        return $Value.ToString('R', [Globalization.CultureInfo]::InvariantCulture)
+    }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $keys = @($Value.Keys)
+        if ($keys.Count -eq 0) { return '{}' }
+        $parts = @(foreach ($key in $keys) {
+                $padInner + (ConvertTo-CanonicalJsonString -Value ([string]$key)) + ': ' + (ConvertTo-CanonicalJson -Value $Value[$key] -Depth ($Depth + 1))
+            })
+        return "{`n" + ($parts -join ",`n") + "`n" + $pad + '}'
+    }
+    if ($Value -is [psobject] -and -not ($Value -is [System.Collections.IEnumerable])) {
+        $properties = @($Value.PSObject.Properties)
+        if ($properties.Count -eq 0) { return '{}' }
+        $parts = @(foreach ($property in $properties) {
+                $padInner + (ConvertTo-CanonicalJsonString -Value $property.Name) + ': ' + (ConvertTo-CanonicalJson -Value $property.Value -Depth ($Depth + 1))
+            })
+        return "{`n" + ($parts -join ",`n") + "`n" + $pad + '}'
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        $items = @($Value)
+        if ($items.Count -eq 0) { return '[]' }
+        $parts = @(foreach ($item in $items) { $padInner + (ConvertTo-CanonicalJson -Value $item -Depth ($Depth + 1)) })
+        return "[`n" + ($parts -join ",`n") + "`n" + $pad + ']'
+    }
+    return (ConvertTo-CanonicalJsonString -Value ([string]$Value))
+}
+
 function Write-Utf8Json {
     param(
         [Parameter(Mandatory = $true)]$Value,
@@ -21,7 +86,7 @@ function Write-Utf8Json {
     if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
-    $json = (($Value | ConvertTo-Json -Depth 30) -replace "`r`n", "`n") + "`n"
+    $json = (ConvertTo-CanonicalJson -Value $Value) + "`n"
     $temporary = Join-Path $parent ('.' + [IO.Path]::GetFileName($Path) + '.' + [Guid]::NewGuid().ToString('N') + '.tmp')
     [System.IO.File]::WriteAllText($temporary, $json, (New-Object System.Text.UTF8Encoding($false)))
     try {
