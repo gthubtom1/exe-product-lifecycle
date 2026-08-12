@@ -60,7 +60,7 @@ function Get-Json {
     param([string]$Root)
     $path = Join-Path $Root 'product-state\tooling\TOOL-INVENTORY.json'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
-    try { return Get-Content -Raw -LiteralPath $path | ConvertFrom-Json } catch { return $null }
+    try { return Get-Content -Raw -Encoding UTF8 -LiteralPath $path | ConvertFrom-Json } catch { return $null }
 }
 
 function Set-Json {
@@ -165,7 +165,7 @@ Add-Result -Id 'R10-no-crash' -Expected 'clean' -Actual $(if ($nullTools.Crashed
 # R11 a torn/truncated JSON must be rejected rather than half-read.
 $p11 = New-Product -Name 'truncated' -SeedFrom $seed
 $truncPath = Join-Path $p11 'product-state\tooling\TOOL-INVENTORY.json'
-$full = Get-Content -Raw -LiteralPath $truncPath
+$full = Get-Content -Raw -Encoding UTF8 -LiteralPath $truncPath
 [System.IO.File]::WriteAllText($truncPath, $full.Substring(0, [int]($full.Length / 3)))
 $truncated = Invoke-Discover -Root $p11 -ExtraArgs @('-ReuseInventory')
 Add-Result -Id 'R11-truncated-rejected' -Expected 'full-discovery' -Actual (Get-Key $truncated 'reuse')

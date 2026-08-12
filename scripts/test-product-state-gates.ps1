@@ -61,8 +61,8 @@ function Set-Status {
     # not the supported update-product-state.ps1 path.
     $statePath = Join-Path $Root 'product-state\STATE.yaml'
     $indexPath = Join-Path $Root 'product-state\PRODUCT-INDEX.md'
-    $state = Get-Content -Raw -LiteralPath $statePath
-    $index = Get-Content -Raw -LiteralPath $indexPath
+    $state = Get-Content -Raw -Encoding UTF8 -LiteralPath $statePath
+    $index = Get-Content -Raw -Encoding UTF8 -LiteralPath $indexPath
     [IO.File]::WriteAllText($statePath, ([regex]::Replace($state, '(?m)^status:.*$', ('status: "' + $Status + '"'))), (New-Object Text.UTF8Encoding($true)))
     [IO.File]::WriteAllText($indexPath, ([regex]::Replace($index, '(?m)^(- 当前状态:\s*`)[^`]*(`)', ('${1}' + $Status + '${2}'))), (New-Object Text.UTF8Encoding($true)))
 }
@@ -124,7 +124,7 @@ Assert-Match -Name 'G4-clean-after-register' -Text $run.Text -Pattern 'demo-v2\.
 # validator accepts; both writers used to reject it with a raw PowerShell stack trace.
 $root = New-Fixture -Name 'g5-unquoted-id' -ProductId 'unquoted-product'
 $statePath = Join-Path $root 'product-state\STATE.yaml'
-$state = Get-Content -Raw -LiteralPath $statePath
+$state = Get-Content -Raw -Encoding UTF8 -LiteralPath $statePath
 [IO.File]::WriteAllText($statePath, ($state -replace 'product_id: "unquoted-product"', 'product_id: unquoted-product'), (New-Object Text.UTF8Encoding($true)))
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'G5-validator-accepts' -Text $run.Text -Pattern 'RESULT: passed'
@@ -143,7 +143,7 @@ Add-Result -Name 'G6-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected
 # G7 -- mode was the third copy of the truth and the only one nobody compared.
 $root = New-Fixture -Name 'g7-mode-drift'
 $statePath = Join-Path $root 'product-state\STATE.yaml'
-$state = Get-Content -Raw -LiteralPath $statePath
+$state = Get-Content -Raw -Encoding UTF8 -LiteralPath $statePath
 [IO.File]::WriteAllText($statePath, ($state -replace 'mode: "bootstrap"', 'mode: "update"'), (New-Object Text.UTF8Encoding($true)))
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'G7-mode-drift-caught' -Text $run.Text -Pattern 'current mode does not match'
@@ -152,7 +152,7 @@ Assert-Match -Name 'G7-mode-drift-caught' -Text $run.Text -Pattern 'current mode
 $root = New-Fixture -Name 'g8-transition'
 $run = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'BASELINE_CREATED', '-Mode', 'resume')
 Assert-Match -Name 'G8-transition-applied' -Text $run.Text -Pattern '"to_status":\s+"BASELINE_CREATED"'
-$indexText = Get-Content -Raw -LiteralPath (Join-Path $root 'product-state\PRODUCT-INDEX.md')
+$indexText = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root 'product-state\PRODUCT-INDEX.md')
 Assert-Match -Name 'G8-index-follows-state' -Text $indexText -Pattern '当前状态: `BASELINE_CREATED`'
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'G8-still-valid' -Text $run.Text -Pattern 'RESULT: passed'
@@ -169,7 +169,7 @@ Add-Result -Name 'G9-nothing-written' -Passed ($before -eq $after) -Expected 'un
 # pair is only worth anything if a half-finished transition can actually be finished.
 $root = New-Fixture -Name 'g10-journal-replay'
 $statePath = Join-Path $root 'product-state\STATE.yaml'
-$stateText = Get-Content -Raw -LiteralPath $statePath
+$stateText = Get-Content -Raw -Encoding UTF8 -LiteralPath $statePath
 $intendedText = $stateText -replace '(?m)^status:.*$', 'status: "BASELINE_CREATED"'
 $encoder = New-Object Text.UTF8Encoding($true)
 $intendedBytes = $encoder.GetPreamble() + [Text.Encoding]::UTF8.GetBytes($intendedText + [Environment]::NewLine)
@@ -194,7 +194,7 @@ $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductR
 Assert-Match -Name 'G10-interruption-reported' -Text $run.Text -Pattern 'state journal txn-fixture'
 $run = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-ResumeJournal')
 Assert-Match -Name 'G10-journal-replayed' -Text $run.Text -Pattern '"status":\s+"journal_replayed"'
-$stateAfter = Get-Content -Raw -LiteralPath $statePath
+$stateAfter = Get-Content -Raw -Encoding UTF8 -LiteralPath $statePath
 Assert-Match -Name 'G10-transition-completed' -Text $stateAfter -Pattern 'status: "BASELINE_CREATED"'
 Add-Result -Name 'G10-journal-cleared' -Passed (-not (Test-Path -LiteralPath (Join-Path $root 'product-state\.state-journal.json'))) -Expected 'cleared' -Actual $(if (Test-Path -LiteralPath (Join-Path $root 'product-state\.state-journal.json')) { 'still-there' } else { 'cleared' })
 
@@ -216,7 +216,7 @@ Assert-Match -Name 'G12-coverage-complete' -Text $run.Text -Pattern 'COVERAGE: \
 # of the product, where the bytes still verify and simply are not the product's bytes.
 $root = New-Fixture -Name 'g13-traversal'
 $statePath = Join-Path $root 'product-state\STATE.yaml'
-$state = Get-Content -Raw -LiteralPath $statePath
+$state = Get-Content -Raw -Encoding UTF8 -LiteralPath $statePath
 [IO.File]::WriteAllText($statePath, ([regex]::Replace($state, '(?m)^baseline_artifact:.*$', 'baseline_artifact: "../outside.exe"')), (New-Object Text.UTF8Encoding($true)))
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'G13-traversal-refused' -Text $run.Text -Pattern 'points outside the product directory'
@@ -269,7 +269,7 @@ $null = Invoke-Script -Name 'init-product.ps1' -ScriptArgs @('-ProductRoot', $p2
 $run = Invoke-Script -Name 'detect-protections.ps1' -ScriptArgs @('-ProductRoot', $p2)
 Assert-Match -Name 'P2-detect-runs-clean' -Text $run.Text -Pattern '"status":\s+"assessed"'
 Add-Result -Name 'P2-detect-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
-$profileText = Get-Content -Raw -LiteralPath (Join-Path $p2 'product-state\PROTECTION-PROFILE.yaml')
+$profileText = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $p2 'product-state\PROTECTION-PROFILE.yaml')
 Assert-Match -Name 'P2-profile-assessed' -Text $profileText -Pattern 'status:\s*"ASSESSED"'
 $verdict = [regex]::Match($profileText, '(?m)^\s*verdict:\s*"([^"]+)"')
 $verdictOk = $verdict.Success -and $verdict.Groups[1].Value -in @('CAN_PATCH', 'OVERLAY_ONLY', 'WRAPPER_ONLY', 'REBUILD_REQUIRED', 'UNKNOWN')
@@ -291,7 +291,7 @@ function Set-ContractField {
         [Parameter(Mandatory = $true)][string]$Key,
         [Parameter(Mandatory = $true)][string]$Value
     )
-    $text = Get-Content -Raw -LiteralPath $Path
+    $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path
     $text = [regex]::Replace($text, ('(?m)^(\s*{0}:\s*")[^"]*(")' -f [regex]::Escape($Key)), ('${1}' + $Value + '${2}'))
     [IO.File]::WriteAllText($Path, $text, (New-Object Text.UTF8Encoding($false)))
 }

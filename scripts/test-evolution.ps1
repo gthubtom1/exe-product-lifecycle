@@ -102,7 +102,7 @@ try {
 
     $findScript = Join-Path $testSkill 'scripts\find-verified-patterns.ps1'
     $indexPath = Join-Path $testSkill 'knowledge\INDEX.json'
-    $originalIndex = Get-Content -Raw -LiteralPath $indexPath
+    $originalIndex = Get-Content -Raw -Encoding UTF8 -LiteralPath $indexPath
     $unfiltered = Invoke-TestScript -Name 'verified_pattern_is_matchable_without_filters' -Script $findScript -Arguments @{ SkillRoot = $testSkill }
     if (($unfiltered -join "`n") -notmatch [regex]::Escape($experienceId)) { throw 'Unfiltered lookup did not return the verified pattern' }
     $badFilter = Invoke-TestScript -Name 'reject_unknown_category_filter' -Script $findScript -Arguments @{ Category = 'packagin'; SkillRoot = $testSkill } -ExpectFailure $true
@@ -130,7 +130,7 @@ try {
     $findAfter = Invoke-TestScript -Name 'deprecated_pattern_not_matchable' -Script (Join-Path $testSkill 'scripts\find-verified-patterns.ps1') -Arguments @{ Category = 'packaging'; Tag = 'nested-runtime'; SkillRoot = $testSkill }
     if (($findAfter -join "`n") -match [regex]::Escape($experienceId)) { throw 'Deprecated pattern remained matchable' }
 
-    $badDraft = Get-Content -Raw -LiteralPath (Join-Path $source 'fixtures\evolution\candidate-draft.json') | ConvertFrom-Json
+    $badDraft = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $source 'fixtures\evolution\candidate-draft.json') | ConvertFrom-Json
     $badDraft.summary = 'This deliberately private draft includes C:\private\customer\target.exe and must fail automatic export.'
     $badDraft | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $private 'product-state\learning\CANDIDATE-DRAFT.json') -Encoding UTF8
     Invoke-TestScript -Name 'reject_private_path' -Script (Join-Path $testSkill 'scripts\capture-experience.ps1') -Arguments @{

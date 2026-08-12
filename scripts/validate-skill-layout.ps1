@@ -12,9 +12,9 @@ $errors = New-Object System.Collections.Generic.List[string]
 $skillPath = Join-Path $root 'SKILL.md'
 if (-not (Test-Path -LiteralPath $skillPath -PathType Leaf)) { [void]$errors.Add('SKILL.md is missing') }
 else {
-    $skill = Get-Content -Raw -LiteralPath $skillPath
+    $skill = Get-Content -Raw -Encoding UTF8 -LiteralPath $skillPath
     if ($skill -notmatch '(?s)^---\r?\nname:\s*exe-product-lifecycle\r?\ndescription:\s*.+?\r?\n---\r?\n') { [void]$errors.Add('SKILL.md frontmatter is invalid') }
-    if ((Get-Content -LiteralPath $skillPath).Count -gt 500) { [void]$errors.Add('SKILL.md exceeds 500 lines') }
+    if ((Get-Content -Encoding UTF8 -LiteralPath $skillPath).Count -gt 500) { [void]$errors.Add('SKILL.md exceeds 500 lines') }
 }
 
 foreach ($required in @('WORKFLOW.md', 'agents/openai.yaml', 'references/knowledge-lifecycle.md', 'knowledge/INDEX.json', 'knowledge/knowledge.lock.json', 'assets/lifecycle-states.json', 'scripts/lib/product-state-common.ps1', 'scripts/update-product-state.ps1', 'scripts/start-here.ps1', 'scripts/detect-protections.ps1', 'scripts/lib/mock-auth-core.ps1', 'scripts/mock-authorization-server.ps1')) {
@@ -38,7 +38,7 @@ foreach ($script in @(Get-ChildItem -LiteralPath (Join-Path $root 'scripts') -Re
 }
 
 foreach ($json in @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.json' | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' })) {
-    try { $null = Get-Content -Raw -LiteralPath $json.FullName | ConvertFrom-Json }
+    try { $null = Get-Content -Raw -Encoding UTF8 -LiteralPath $json.FullName | ConvertFrom-Json }
     catch { [void]$errors.Add("invalid JSON: $($json.FullName.Substring($root.Length + 1))") }
 }
 

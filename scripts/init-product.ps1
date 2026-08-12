@@ -287,7 +287,7 @@ if ($null -ne $primaryRecord) {
 if (-not [string]::IsNullOrWhiteSpace($existingStateText)) {
     $existingIndexPath = Join-Path $stateRoot 'PRODUCT-INDEX.md'
     if (Test-Path -LiteralPath $existingIndexPath -PathType Leaf) {
-        $existingIndexText = Get-Content -Raw -LiteralPath $existingIndexPath
+        $existingIndexText = Get-Content -Raw -Encoding UTF8 -LiteralPath $existingIndexPath
         $existingStartMatch = [regex]::Match($existingIndexText, '(?m)^- 首次说明文件:\s*`([^`]+)`')
         if ($existingStartMatch.Success) {
             $startRelative = $existingStartMatch.Groups[1].Value
@@ -306,7 +306,7 @@ $replacements = @{
     '__DATE__' = $date
 }
 foreach ($file in $createdFiles) {
-    $text = Get-Content -Raw -LiteralPath $file
+    $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $file
     foreach ($key in $replacements.Keys) {
         $text = $text.Replace($key, [string]$replacements[$key])
     }
@@ -353,7 +353,7 @@ else {
     # Re-running intake is not a new product initialization. If the caller
     # explicitly adds a document, merge only new preserved records so the
     # product input manifest cannot silently lag behind reference-docs.
-    $existingManifest = Get-Content -Raw -LiteralPath $inputManifest
+    $existingManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $inputManifest
     foreach ($record in $inputRecords) {
         $preservedPath = [string]$record.preserved_path
         if ($existingManifest -match [regex]::Escape($preservedPath)) {

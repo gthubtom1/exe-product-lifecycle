@@ -8,7 +8,7 @@ $script:EvidenceLevels = @('static_present', 'entrypoint_present', 'locally_exer
 function Read-JsonFile {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "JSON file not found: $Path" }
-    try { return Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json }
+    try { return Get-Content -Raw -Encoding UTF8 -LiteralPath $Path | ConvertFrom-Json }
     catch { throw "Invalid JSON: $Path`n$($_.Exception.Message)" }
 }
 
@@ -316,7 +316,7 @@ function Get-ProductIdentity {
     $root = (Resolve-Path -LiteralPath $ProductRoot).Path
     $statePath = Join-Path $root 'product-state\STATE.yaml'
     if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { throw "Product state not found: $statePath" }
-    $text = Get-Content -Raw -LiteralPath $statePath
+    $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $statePath
     $id = [regex]::Match($text, '(?m)^product_id:\s*["'']?([^"''\r\n]+)')
     $name = [regex]::Match($text, '(?m)^product_name:\s*["'']?([^"''\r\n]+)')
     $status = [regex]::Match($text, '(?m)^status:\s*["'']?([^"''\s]+)')

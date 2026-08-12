@@ -110,7 +110,7 @@ try {
             # FIX-5 (robustness). A truncated or empty manifest must not abort the
             # whole intake; treat it as "not a match" and keep scanning.
             $existingText = ''
-            try { $existingText = Get-Content -Raw -LiteralPath $existingManifest.FullName }
+            try { $existingText = Get-Content -Raw -Encoding UTF8 -LiteralPath $existingManifest.FullName }
             catch { continue }
             if ([string]::IsNullOrWhiteSpace($existingText)) { continue }
 

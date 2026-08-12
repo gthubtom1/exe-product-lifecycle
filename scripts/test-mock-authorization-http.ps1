@@ -119,7 +119,7 @@ try {
 
     Assert-Value 'H1-server-listens' 'yes' $(if ($started) { 'yes' } else { 'no' })
     if (-not $started) {
-        $reason = if (Test-Path -LiteralPath $stdout) { (Get-Content -Raw -LiteralPath $stdout) } else { '(no output captured)' }
+        $reason = if (Test-Path -LiteralPath $stdout) { (Get-Content -Raw -Encoding UTF8 -LiteralPath $stdout) } else { '(no output captured)' }
         Write-Output '--- server output ---'
         Write-Output $reason
         Write-Output ''

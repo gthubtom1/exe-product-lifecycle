@@ -27,7 +27,7 @@ function Read-TextFileSafe {
     # Get-Content -Raw yields $null for a zero-byte file, and every regex downstream would then
     # throw under StrictMode. A truncated file is a finding to report, not a reason to crash.
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
-    $text = Get-Content -Raw -LiteralPath $Path
+    $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path
     if ($null -eq $text) { return '' }
     return $text
 }

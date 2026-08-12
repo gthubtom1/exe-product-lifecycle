@@ -123,7 +123,7 @@ function Read-ExtraRootFile {
     foreach ($file in @($Path)) {
         if ([string]::IsNullOrWhiteSpace([string]$file)) { continue }
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
-        foreach ($line in @(Get-Content -LiteralPath $file -ErrorAction SilentlyContinue)) {
+        foreach ($line in @(Get-Content -Encoding UTF8 -LiteralPath $file -ErrorAction SilentlyContinue)) {
             $entry = ([string]$line).Trim()
             if ([string]::IsNullOrWhiteSpace($entry) -or $entry.StartsWith('#')) { continue }
             [void]$roots.Add([Environment]::ExpandEnvironmentVariables($entry).TrimEnd('\'))
@@ -372,7 +372,7 @@ $resolvedExtraRootFiles = @(@(@($ExtraRootFile) + @($defaultExtraRootFiles)) |
     ForEach-Object { (Resolve-Path -LiteralPath $_).Path } |
     Sort-Object -Unique)
 $extraRootFingerprint = Get-TextFingerprint (($resolvedExtraRootFiles | ForEach-Object {
-    '{0}={1}' -f $_, (Get-TextFingerprint ((Get-Content -Raw -LiteralPath $_ -ErrorAction SilentlyContinue) + ''))
+    '{0}={1}' -f $_, (Get-TextFingerprint ((Get-Content -Raw -Encoding UTF8 -LiteralPath $_ -ErrorAction SilentlyContinue) + ''))
 }) -join ';')
 
 $discoveryInputs = [pscustomobject]@{
@@ -429,7 +429,7 @@ if ($ReuseInventory) {
     if (Test-Path -LiteralPath $jsonPath -PathType Leaf) {
         try {
             $cached = $null
-            $cachedText = Get-Content -Raw -LiteralPath $jsonPath
+            $cachedText = Get-Content -Raw -Encoding UTF8 -LiteralPath $jsonPath
             if ([string]::IsNullOrWhiteSpace($cachedText)) {
                 $reuseRejectReason = 'previous inventory is empty'
             }
@@ -586,7 +586,7 @@ if (-not $reuseApplied) {
     $hostRows = @()
     if (-not [string]::IsNullOrWhiteSpace($HostToolIndexPath) -and (Test-Path -LiteralPath $HostToolIndexPath -PathType Leaf)) {
         try {
-            $hostIndex = Get-Content -Raw -LiteralPath $HostToolIndexPath | ConvertFrom-Json
+            $hostIndex = Get-Content -Raw -Encoding UTF8 -LiteralPath $HostToolIndexPath | ConvertFrom-Json
             $hostRows = @($hostIndex.tools | Where-Object { $_.available -eq $true } | ForEach-Object {
                 $hostPath = [string]$_.resolved_path
                 if (-not [string]::IsNullOrWhiteSpace($hostPath) -and (Test-Path -LiteralPath $hostPath -PathType Leaf)) {

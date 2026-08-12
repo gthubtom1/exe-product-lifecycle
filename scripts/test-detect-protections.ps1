@@ -159,7 +159,7 @@ $null = Invoke-Script -Name 'init-product.ps1' -ScriptArgs @('-ProductRoot', $e2
 $run = Invoke-Script -Name 'detect-protections.ps1' -ScriptArgs @('-ProductRoot', $e2)
 Assert-Match -Name 'E2-runs-clean' -Text $run.Text -Pattern '"status":\s+"assessed"'
 Add-Result -Name 'E2-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
-$e2Profile = Get-Content -Raw -LiteralPath (Join-Path $e2 'product-state\PROTECTION-PROFILE.yaml')
+$e2Profile = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $e2 'product-state\PROTECTION-PROFILE.yaml')
 Assert-Match -Name 'E2-anti-debug-recorded' -Text $e2Profile -Pattern 'anti_debug:\s*"yes"'
 Assert-Match -Name 'E2-verdict-is-overlay' -Text $e2Profile -Pattern 'verdict:\s*"OVERLAY_ONLY"'
 
