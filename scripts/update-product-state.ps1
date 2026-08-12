@@ -54,7 +54,7 @@ trap {
     exit 1
 }
 
-$root = (Resolve-Path -LiteralPath $ProductRoot).Path
+$root = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $ProductRoot).Path
 $stateRoot = Join-Path $root 'product-state'
 if (-not (Test-Path -LiteralPath $stateRoot -PathType Container)) {
     throw (New-UserFacingError -Message "这个文件夹还没有产品档案: $ProductRoot" `

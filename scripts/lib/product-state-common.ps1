@@ -21,6 +21,29 @@ Set-StrictMode -Version Latest
 # correct no matter which script dot-sources it or from which working directory it runs.
 $ProductStateSkillRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 
+function Resolve-CanonicalPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Every containment check in this skill is a string prefix test, and Windows gives the same
+    # directory two names: C:\Users\RUNNER~1\x and C:\Users\runneradmin\x. Resolve-Path keeps
+    # whichever spelling it was handed, while enumeration hands back the long one, so a product
+    # reached through a short path is reported as escaping its own directory and the relative
+    # paths come out sliced mid-name. Fold every root to the long spelling before comparing.
+    $full = [IO.Path]::GetFullPath($Path)
+    if ($full -notmatch '~[0-9]') { return $full }
+    $qualifier = [IO.Path]::GetPathRoot($full)
+    $rest = $full.Substring($qualifier.Length).Trim('\')
+    if ([string]::IsNullOrEmpty($rest)) { return $full }
+    $current = $qualifier
+    foreach ($segment in $rest.Split('\')) {
+        # -Filter reaches FindFirstFile, which matches an 8.3 alias and returns the long name.
+        $match = @(Get-ChildItem -LiteralPath $current -Force -Filter $segment -ErrorAction SilentlyContinue)
+        if ($match.Count -eq 1) { $current = Join-Path $current $match[0].Name }
+        else { $current = Join-Path $current $segment }
+    }
+    return $current
+}
+
 function Read-TextFileSafe {
     param([Parameter(Mandatory = $true)][string]$Path)
 

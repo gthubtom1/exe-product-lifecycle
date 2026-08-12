@@ -36,7 +36,7 @@ $ErrorActionPreference = 'Stop'
 # of the swap logic here is how the rest of this skill ended up with three YAML parsers.
 . (Join-Path $PSScriptRoot 'lib\product-state-common.ps1')
 
-$root = (Resolve-Path -LiteralPath $ProductRoot).Path
+$root = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $ProductRoot).Path
 $stateRoot = Join-Path $root 'product-state'
 $toolingRoot = Join-Path $stateRoot 'tooling'
 New-Item -ItemType Directory -Force -Path $toolingRoot | Out-Null

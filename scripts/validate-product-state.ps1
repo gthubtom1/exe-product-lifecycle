@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib\product-state-common.ps1')
 
-$root = (Resolve-Path -LiteralPath $ProductRoot).Path
+$root = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $ProductRoot).Path
 $stateRoot = Join-Path $root 'product-state'
 $errors = New-Object System.Collections.Generic.List[string]
 $warnings = New-Object System.Collections.Generic.List[string]

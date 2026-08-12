@@ -40,7 +40,7 @@ trap {
     exit 1
 }
 
-$root = (Resolve-Path -LiteralPath $ProductRoot).Path
+$root = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $ProductRoot).Path
 $stateRoot = Join-Path $root 'product-state'
 if (-not (Test-Path -LiteralPath $stateRoot -PathType Container)) {
     throw (New-UserFacingError -Message "这个文件夹还没有产品档案: $ProductRoot" `
@@ -72,7 +72,7 @@ if ([string]::IsNullOrWhiteSpace($TargetPath) -or -not (Test-Path -LiteralPath $
     throw (New-UserFacingError -Message '找不到要探测的目标程序。' `
         -Hint '用 -TargetPath 指定 EXE，或确认 STATE.yaml 里 baseline_artifact 指向的文件还在。')
 }
-$target = (Resolve-Path -LiteralPath $TargetPath).Path
+$target = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $TargetPath).Path
 
 # --- find DIE from the tool inventory -------------------------------------------------------
 function Get-InventoryToolPath {

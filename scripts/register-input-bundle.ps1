@@ -20,7 +20,7 @@ trap {
     exit 1
 }
 
-$root = (Resolve-Path -LiteralPath $ProductRoot).Path
+$root = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $ProductRoot).Path
 $stateRoot = Join-Path $root 'product-state'
 if (-not (Test-Path -LiteralPath $stateRoot -PathType Container)) {
     throw (New-UserFacingError -Message "这个文件夹还没有产品档案: $ProductRoot" `
@@ -44,7 +44,7 @@ $inputPath = $InputRoot
 if (-not [IO.Path]::IsPathRooted($inputPath)) {
     $inputPath = Join-Path $root $inputPath
 }
-$inputPath = (Resolve-Path -LiteralPath $inputPath).Path
+$inputPath = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $inputPath).Path
 if (-not (Test-Path -LiteralPath $inputPath -PathType Container)) {
     throw (New-UserFacingError -Message "存放新输入的位置不是一个文件夹: $InputRoot" `
         -Hint '把新版程序和说明文件放进产品文件夹下的 incoming/ 里，再重试。')

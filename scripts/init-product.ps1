@@ -37,8 +37,8 @@ if ([string]::IsNullOrWhiteSpace($ProductName)) {
 if (-not (Test-Path -LiteralPath $ProductRoot -PathType Container)) {
     New-Item -ItemType Directory -Force -Path $ProductRoot | Out-Null
 }
-$root = (Resolve-Path -LiteralPath $ProductRoot).Path
-$core = (Resolve-Path -LiteralPath $CorePath).Path
+$root = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $ProductRoot).Path
+$core = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $CorePath).Path
 $scaffold = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\assets\product-scaffold')).Path
 
 if (-not (Test-Path -LiteralPath $core -PathType Leaf)) {

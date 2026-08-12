@@ -327,6 +327,28 @@ Set-ContractField -Path $contract -Key 'claimed_tier' -Value 'C'
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'BS3-honest-C-clears-gate' -Text $run.Text -Pattern 'binding_strength_backed' -Absent
 
+# SN -- Windows gives one directory two names: C:\Users\RUNNER~1\x and C:\Users\runneradmin\x.
+# Every containment check in the validator is a string prefix test, so a product reached through
+# the 8.3 alias was reported as escaping its own directory and its relative paths came out sliced
+# mid-name. It stayed invisible because it is green on any machine whose product path has no short
+# name in it. Creating an alias needs an elevated shell, so this says SKIP rather than pass falsely.
+$snParent = Join-Path $FixtureRoot 'sn-shortpath'
+New-Item -ItemType Directory -Force -Path (Join-Path $snParent 'canonical-long-name') | Out-Null
+$null = & fsutil file setshortname (Join-Path $snParent 'canonical-long-name') 'SHORTN~1' 2>&1
+$snShort = Join-Path $snParent 'SHORTN~1'
+if (Test-Path -LiteralPath $snShort -PathType Container) {
+    $root = Join-Path $snShort 'product'
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    [IO.File]::WriteAllText((Join-Path $root 'demo.exe'), 'short path fixture bytes', [Text.Encoding]::ASCII)
+    $null = Invoke-Script -Name 'init-product.ps1' -ScriptArgs @('-ProductRoot', $root, '-ProductId', 'shortpath-product', '-CorePath', (Join-Path $root 'demo.exe'))
+    $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+    Assert-Match -Name 'SN1-short-path-product-passes' -Text $run.Text -Pattern 'RESULT: passed'
+    Assert-Match -Name 'SN2-no-false-escape' -Text $run.Text -Pattern 'points outside the product directory' -Absent
+}
+else {
+    Write-Output 'SKIP   SN1-short-path-product-passes    could not create an 8.3 alias (needs an elevated shell)'
+}
+
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''
 Write-Output ("RESULT: {0} passed, {1} failed" -f @($script:Results | Where-Object { $_.Passed }).Count, $failed.Count)

@@ -38,7 +38,7 @@ if (-not (Test-Path -LiteralPath $ProductRoot -PathType Container)) {
     throw (New-UserFacingError -Message "产品文件夹不存在: $ProductRoot" `
         -Hint '先确认这个路径，或者让用户把 EXE 放进一个文件夹再把文件夹路径告诉你。')
 }
-$root = (Resolve-Path -LiteralPath $ProductRoot).Path
+$root = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $ProductRoot).Path
 $stateRoot = Join-Path $root 'product-state'
 $scriptDir = $PSScriptRoot
 $hasState = Test-Path -LiteralPath (Join-Path $stateRoot 'STATE.yaml') -PathType Leaf
