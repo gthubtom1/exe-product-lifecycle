@@ -361,6 +361,46 @@ $run = Invoke-Script -Name 'publish-knowledge.ps1' -ScriptArgs @('-SkillRoot', $
 Assert-Match -Name 'PK2-non-repo-names-clone' -Text $run.Text -Pattern 'git clone'
 Add-Result -Name 'PK2-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
 
+# RA -- "每阶段必须能收工". A long task drags when an agent keeps working a stage it has already
+# finished instead of landing a checkpoint. The moment a stage's exit is earned, the tooling must
+# say so; and it must stay silent on a stage that is not finished, or the affordance becomes a nag.
+# A freshly-initialised product has already earned INIT -> BASELINE_CREATED (init writes the
+# baseline/input manifests those requirements ask for), so READY-TO-ADVANCE must fire here.
+$root = New-Fixture -Name 'ra-ready-to-advance'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RA1-ready-signal-when-earned' -Text $run.Text -Pattern '(?m)^READY-TO-ADVANCE: BASELINE_CREATED'
+# BASELINE_CREATED still needs the tool inventory, the protection profile and a first-analysis
+# conclusion, so its next rung is NOT earned: the signal must be absent. The NEXT-NEEDS anchor
+# proves the fixture really is on an unfinished stage, so the Absent assertion is not vacuous.
+$root = New-Fixture -Name 'ra-not-ready'
+$null = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'BASELINE_CREATED', '-Mode', 'resume')
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RA2-silent-when-unfinished-anchor' -Text $run.Text -Pattern '(?m)^NEXT-NEEDS: '
+Assert-Match -Name 'RA2-silent-when-unfinished' -Text $run.Text -Pattern '(?m)^READY-TO-ADVANCE:' -Absent
+
+# L1 -- the structural guarantee under "每阶段必须能收工": from any stage the ladder can always name
+# where you are and the single next step, so stopping and resuming is always well defined. Every
+# state carries a meaning and a next_action; every declared next_status resolves to a real state;
+# and the main path from INIT reaches RELEASED without a dead end in the middle.
+$lifecycle = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $script:Skill 'assets\lifecycle-states.json') | ConvertFrom-Json
+$states = @($lifecycle.states)
+$byStatus = @{}
+foreach ($s in $states) { $byStatus[[string]$s.status] = $s }
+$missingAction = @($states | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.meaning) -or [string]::IsNullOrWhiteSpace([string]$_.next_action) } | ForEach-Object { [string]$_.status })
+Add-Result -Name 'L1-every-stage-names-next-step' -Passed ($missingAction.Count -eq 0) -Expected 'all-named' -Actual $(if ($missingAction.Count -eq 0) { 'all-named' } else { "blank: $($missingAction -join ',')" })
+$dangling = @($states | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.next_status) -and -not $byStatus.ContainsKey([string]$_.next_status) } | ForEach-Object { [string]$_.status })
+Add-Result -Name 'L1-no-dangling-next-status' -Passed ($dangling.Count -eq 0) -Expected 'all-resolve' -Actual $(if ($dangling.Count -eq 0) { 'all-resolve' } else { "dangling: $($dangling -join ',')" })
+$cursor = 'INIT'
+$walked = New-Object System.Collections.Generic.List[string]
+$reachedReleased = $false
+while ($byStatus.ContainsKey($cursor) -and -not $walked.Contains($cursor)) {
+    [void]$walked.Add($cursor)
+    if ($cursor -eq 'RELEASED') { $reachedReleased = $true; break }
+    $cursor = [string]$byStatus[$cursor].next_status
+    if ([string]::IsNullOrWhiteSpace($cursor)) { break }
+}
+Add-Result -Name 'L1-main-path-reaches-released' -Passed $reachedReleased -Expected 'INIT..RELEASED' -Actual $(if ($reachedReleased) { 'INIT..RELEASED' } else { "stops at $cursor" })
+
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''
 Write-Output ("RESULT: {0} passed, {1} failed" -f @($script:Results | Where-Object { $_.Passed }).Count, $failed.Count)

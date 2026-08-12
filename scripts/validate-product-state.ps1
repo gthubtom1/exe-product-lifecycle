@@ -970,6 +970,14 @@ if ($null -ne $lifecycleReadiness -and $lifecycleReadiness.Known) {
     foreach ($item in $lifecycleReadiness.PendingForNext) {
         Write-Output "NEXT-NEEDS: $($item.Why) [$($item.Detail)]"
     }
+    # A long task drags when an agent keeps working a stage it has already finished. The moment a
+    # stage is a clean, earned stopping point, say so out loud: record the checkpoint and move on,
+    # rather than piling more onto a stage whose exit is already paid for. Emitted only when the
+    # next rung is fully earned (Get-LifecycleReadiness.ReadyToAdvance), so it is a "you may stop
+    # here" affordance, never a nag on an unfinished stage.
+    if ($lifecycleReadiness.ReadyToAdvance) {
+        Write-Output "READY-TO-ADVANCE: $($lifecycleReadiness.NextStatus) 需要的证据已经齐了——现在就用 update-product-state.ps1 推进到 $($lifecycleReadiness.NextStatus) 落一个检查点（可以收工、可以换人接手），不要停在本阶段继续加工。"
+    }
 }
 Write-CoverageSummary
 if ($errors.Count -gt 0) {

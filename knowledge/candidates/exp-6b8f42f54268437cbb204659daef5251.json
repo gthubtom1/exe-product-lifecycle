@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "record_type": "experience_candidate",
+  "experience_id": "exp-6b8f42f54268437cbb204659daef5251",
+  "status": "candidate",
+  "created_at": "2026-08-12T05:56:24.7844652+00:00",
+  "updated_at": "2026-08-12T05:56:24.7844652+00:00",
+  "payload_sha256": "26C19F18D5A34A4EB6971D3BC8A334C8947CF6F0BFF2893E0088BC2AB4A2B797",
+  "title": "PowerShell 自测脚本必须显式 exit 0，否则残留退出码会变成步骤结果",
+  "summary": "脚本里若干场景会故意运行返回非零的子进程作为正常流程，$LASTEXITCODE 会停在最后一个非零值上。用 -File 启动时无害，但 CI 常用 -command 调用，残留码就成了整个步骤的结果——于是出现「全部断言通过」的下一行却是步骤失败。断言全绿后要显式 exit 0，同时保证真有失败时仍返回 1。",
+  "category": "tooling",
+  "tags": [
+    "powershell",
+    "exit-code",
+    "ci",
+    "windows",
+    "portability"
+  ],
+  "source_evidence": [
+    {
+      "source_id": "src-877d99212b3446ff9021d50e36d8d46b",
+      "source_kind": "fixture",
+      "evidence_role": "supporting",
+      "artifact_kind": "ps1",
+      "evidence_proof_id": "proof-55ba02fa944c4f719e1c0e0e6da76a27",
+      "evidence_level": "failure_observed"
+    }
+  ],
+  "pattern": {
+    "applicability": [
+      "PowerShell 脚本在 CI 里以 -command 方式被调用",
+      "脚本内部会把返回非零的子进程当作正常流程调用"
+    ],
+    "detection": [
+      "输出里「N passed, 0 failed」紧跟着步骤失败或退出码 1",
+      "同一脚本 -File 启动通过、-command 启动失败"
+    ],
+    "negative_indicators": [
+      "脚本从不调用会返回非零的子进程时不受影响",
+      "始终以 -File 方式启动时不受影响"
+    ],
+    "procedure": [
+      "自测通过路径的末尾显式 exit 0",
+      "失败路径显式 exit 1，不依赖残留码"
+    ],
+    "verification": [
+      "制造一条真实失败，脚本必须返回 1",
+      "去掉末尾的 exit 0 并让最后一个场景运行返回非零的子命令，-command 启动必须变红"
+    ],
+    "rollback": [
+      "只是末尾一行显式退出码，删掉即恢复旧行为"
+    ],
+    "failure_signals": [
+      "「通过」汇报行与「步骤失败」同时出现",
+      "退出码与断言统计结果对不上"
+    ],
+    "stop_conditions": [
+      "判断不清某条路径应返回什么退出码时，先不要掩盖它，宁可让它暴露"
+    ],
+    "limitations": [
+      "只针对进程退出码语义；不覆盖 throw 或 trap 的其它错误传播路径"
+    ]
+  },
+  "sanitization": {
+    "automatic_scan": "passed",
+    "reviewed_status": "pending",
+    "scan_version": 1,
+    "checked_at": "2026-08-12T05:56:24.7844652+00:00",
+    "payload_sha256": "26C19F18D5A34A4EB6971D3BC8A334C8947CF6F0BFF2893E0088BC2AB4A2B797",
+    "findings": []
+  },
+  "reviews": []
+}

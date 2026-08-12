@@ -46,7 +46,12 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-mock-authorization-http.ps1
       - name: Run tool inventory reuse regression
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-tool-inventory-reuse.ps1
+        # -MaxSearchDepth caps how deep the discovery walk descends on the runner. The sweep is still
+        # real and full-MODE -- every fixed drive and every conventional tool-folder name is crossed,
+        # so R1/R7/R15 stay meaningful and the sweep that hid the 8.3-path and drive bugs is still
+        # exercised -- it just stops descending ten levels into C:\Program Files, which is the
+        # documented reason (`R1 cold run took 429.54s`) this step took minutes.
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-tool-inventory-reuse.ps1 -MaxSearchDepth 3
       - name: Run install parity regression
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-install-parity.ps1

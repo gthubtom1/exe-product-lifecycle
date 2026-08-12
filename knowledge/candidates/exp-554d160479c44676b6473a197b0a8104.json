@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "record_type": "experience_candidate",
+  "experience_id": "exp-554d160479c44676b6473a197b0a8104",
+  "status": "candidate",
+  "created_at": "2026-08-12T05:56:24.7844652+00:00",
+  "updated_at": "2026-08-12T05:56:24.7844652+00:00",
+  "payload_sha256": "F3AC4C503ABD4BBFBA700B22EC77874B21DD6D876D45ADFB554FB6800D3DC001",
+  "title": "单向镜像同步会删掉只在安装副本里的学习产物，必须显式保留",
+  "summary": "把源目录镜像到安装副本的同步脚本，如果清理逻辑是「删除源里没有的文件」，就会连带删掉只存在于安装副本、还没发布的学习或经验文件——它们别处没有备份。同步必须显式识别并保留这类产物，并对本身已是克隆的副本直接拒绝覆盖式同步。",
+  "category": "tooling",
+  "tags": [
+    "sync",
+    "mirror",
+    "data-loss",
+    "portability"
+  ],
+  "source_evidence": [
+    {
+      "source_id": "src-14c663ef9b94428f93e6cd9b724f2743",
+      "source_kind": "fixture",
+      "evidence_role": "supporting",
+      "artifact_kind": "ps1",
+      "evidence_proof_id": "proof-fbee607e2a934e92be3f851c149163ef",
+      "evidence_level": "failure_observed"
+    }
+  ],
+  "pattern": {
+    "applicability": [
+      "存在把源目录单向镜像到安装位置的同步脚本",
+      "安装副本里会产生源目录没有、但有价值的本地文件"
+    ],
+    "detection": [
+      "同步的清理循环按「源里没有就删」执行",
+      "学习或经验目录只在安装副本里有内容"
+    ],
+    "negative_indicators": [
+      "安装副本本身就是带版本控制的克隆、改用拉取时不适用",
+      "安装副本从不产生独有文件时没有风险"
+    ],
+    "procedure": [
+      "同步时对安装副本独有的经验文件显式保留，并提示去发布",
+      "对已是克隆的副本拒绝复制式同步，改走拉取"
+    ],
+    "verification": [
+      "造一个只在安装副本存在的经验文件，跑完同步它必须仍在",
+      "把保留逻辑改回删除，必须立刻报「同步删掉了只有安装副本才有的经验」"
+    ],
+    "rollback": [
+      "保留逻辑是加法，去掉即恢复旧的删除行为，但会重新引入丢失风险"
+    ],
+    "failure_signals": [
+      "同步后安装副本独有的经验消失",
+      "本该删除的陈旧文件用例被误伤"
+    ],
+    "stop_conditions": [
+      "分不清某文件是「陈旧应删」还是「独有应留」时，保留它并交给发布流程判断"
+    ],
+    "limitations": [
+      "只针对单向镜像同步；不替代真正的版本控制与远程备份"
+    ]
+  },
+  "sanitization": {
+    "automatic_scan": "passed",
+    "reviewed_status": "pending",
+    "scan_version": 1,
+    "checked_at": "2026-08-12T05:56:24.7844652+00:00",
+    "payload_sha256": "F3AC4C503ABD4BBFBA700B22EC77874B21DD6D876D45ADFB554FB6800D3DC001",
+    "findings": []
+  },
+  "reviews": []
+}

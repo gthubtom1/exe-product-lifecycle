@@ -23,6 +23,12 @@ param(
     # that syncing or reinstalling the skill cannot wipe the user's own tool locations.
     [string[]]$ExtraRootFile,
 
+    # Search only what the caller named (-AdditionalSearchRoot and the extra-root files), skipping
+    # the machine-wide sweep. Turns a multi-minute cold discovery into seconds when the question is
+    # about a known folder. A snapshot taken this way is marked as narrow and is never reused as
+    # evidence about the whole machine.
+    [switch]$SearchRootsOnly,
+
     [switch]$ReuseInventory,
 
     [ValidateRange(1, 8760)]
@@ -141,7 +147,8 @@ function Get-DiscoverySearchRoot {
         [string[]]$Additional,
         [Parameter(Mandatory = $true)][int]$DefaultDepth,
         [switch]$DeepScan,
-        [string[]]$ExtraRootFile
+        [string[]]$ExtraRootFile,
+        [switch]$SearchRootsOnly
     )
 
     # Roots are collected drive-agnostically. The previous list hard-coded C:\Program Files and
@@ -173,6 +180,14 @@ function Get-DiscoverySearchRoot {
         $seen[$key] = $entry
         [void]$roots.Add($entry)
     }
+
+    # Sections 1-5 and 7 are the machine-wide sweep, and they are what makes a cold discovery cost
+    # minutes: every fixed drive crossed with every conventional tool folder name, walked deep.
+    # -SearchRootsOnly drops all of it and searches only what the caller named, which is the right
+    # trade when the question is "is the tool in this folder" rather than "what does this machine
+    # have". It is part of the reuse fingerprint, so a narrow snapshot can never be mistaken for
+    # evidence about the whole machine.
+    if (-not $SearchRootsOnly) {
 
     # 1. Program directories, from the environment rather than a literal drive letter.
     foreach ($variable in @('ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432')) {
@@ -235,12 +250,15 @@ function Get-DiscoverySearchRoot {
         catch { }
     }
 
-    # 6. The user's own locations, and this run's explicit roots.
+    }
+
+    # 6. The user's own locations, and this run's explicit roots. Always searched: under
+    # -SearchRootsOnly these are the whole search.
     foreach ($extra in @(Read-ExtraRootFile -Path $ExtraRootFile)) { Add-SearchRoot -Path $extra -Depth $DefaultDepth -Explicit }
     foreach ($extra in @($Additional)) { Add-SearchRoot -Path $extra -Depth $DefaultDepth -Explicit }
 
     # 7. Opt-in whole-machine sweep.
-    if ($DeepScan) {
+    if ($DeepScan -and -not $SearchRootsOnly) {
         foreach ($drive in @(Get-FixedDriveRoot)) { Add-SearchRoot -Path $drive -Depth $DeepScanDepth }
     }
 
@@ -387,6 +405,7 @@ $discoveryInputs = [pscustomobject]@{
     max_search_depth = $MaxSearchDepth
     search_generation = $SearchGeneration
     deep_scan = [bool]$DeepScan
+    search_roots_only = [bool]$SearchRootsOnly
     extra_root_fingerprint = $extraRootFingerprint
     catalog_fingerprint = Get-TextFingerprint (($catalog | ForEach-Object { '{0}={1}' -f $_.id, (($_.names) -join ',') }) -join ';')
 }
@@ -409,6 +428,12 @@ function Test-DiscoveryInputsMatch {
     # searched less, so its not-found rows say nothing about what a deep scan would have found.
     $cachedDeep = ConvertTo-BooleanValue (Get-PropertyValue $Cached 'deep_scan' $false)
     if ([bool]$Current.deep_scan -and -not $cachedDeep) { return $false }
+    # Same rule one step narrower: a snapshot that only looked inside the folders the caller named
+    # cannot answer "does this machine have it". The reverse is fine -- a machine-wide snapshot
+    # already covers the named folders. Without this, one fast narrow run would poison every later
+    # full run into reporting tools as missing.
+    $cachedNarrow = ConvertTo-BooleanValue (Get-PropertyValue $Cached 'search_roots_only' $false)
+    if (-not [bool]$Current.search_roots_only -and $cachedNarrow) { return $false }
     $cachedRoots = @(@(Get-PropertyValue $Cached 'additional_search_roots' -Default @()) | ForEach-Object { ConvertTo-ComparableText $_ } | Sort-Object -Unique)
     $currentRoots = @(@($Current.additional_search_roots) | ForEach-Object { ConvertTo-ComparableText $_ } | Sort-Object -Unique)
     return (($cachedRoots -join '|') -eq ($currentRoots -join '|'))
@@ -512,7 +537,7 @@ if ($ReuseInventory) {
 }
 
 if (-not $reuseApplied) {
-    $searchRoots = @(Get-DiscoverySearchRoot -Additional $AdditionalSearchRoot -DefaultDepth $MaxSearchDepth -DeepScan:$DeepScan -ExtraRootFile $resolvedExtraRootFiles)
+    $searchRoots = @(Get-DiscoverySearchRoot -Additional $AdditionalSearchRoot -DefaultDepth $MaxSearchDepth -DeepScan:$DeepScan -ExtraRootFile $resolvedExtraRootFiles -SearchRootsOnly:$SearchRootsOnly)
 
     $candidateNames = @($catalog | ForEach-Object { $_.names }) | Select-Object -Unique
     $candidateFileNames = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
@@ -624,6 +649,9 @@ $scanScope = '复用上次的发现范围'
 if (-not $reuseApplied) {
     $scanScope = "本次搜索了 $searchedRootCount 个目录根，覆盖磁盘 $($searchedDrives -join ' ')"
     if ($DeepScan) { $scanScope += "（深度扫描：整盘遍历到 $DeepScanDepth 层）" }
+    # Said out loud, because a narrow snapshot that reads like a full one is how "not installed"
+    # turns into a wrong answer: it only ever looked where it was told to look.
+    if ($SearchRootsOnly) { $scanScope += '（只扫指定目录：没有做全机搜索，「没找到」只代表这些目录里没有）' }
 }
 $markdown = @(
     '# 本机工具快照',
@@ -696,5 +724,6 @@ Write-InventoryFile -Path $jsonPath -Content (([pscustomobject]@{
 "probeddrives=$script:ProbedDriveCount"
 "languages=$($languagesAvailable -join ',')"
 "deepscan=$(if ($DeepScan) { 'yes' } else { 'no' })"
+"searchrootsonly=$(if ($SearchRootsOnly) { 'yes' } else { 'no' })"
 "extrarootfiles=$($resolvedExtraRootFiles.Count)"
 if (-not $reuseApplied -and $ReuseInventory) { "reuserejected=$reuseRejectReason" }

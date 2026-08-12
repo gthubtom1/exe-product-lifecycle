@@ -20,6 +20,14 @@ param(
     # The suite itself runs under either host; this selects the host the script under test runs in,
     # so the same file can cover the Windows PowerShell 5.1 and the pwsh 7 CI lane.
     [string]$PowerShellHost = 'powershell',
+    # Caps how deep every discovery walk descends. 0 means "do not pass it", so the script keeps its
+    # own default of 10 and a local run is unchanged. CI passes a small value: the machine-wide sweep
+    # is still real and full-MODE (every drive and every conventional tool-folder name is still
+    # crossed, so R1/R7/R15 stay meaningful and the very sweep that hid the 8.3-path and drive bugs
+    # is still exercised), it just does not descend ten levels into C:\Program Files -- which is the
+    # documented reason a cold discovery cost minutes on the runner. Forwarded to EVERY call so the
+    # whole suite shares one depth and the reuse fingerprint stays internally consistent.
+    [ValidateRange(0, 16)][int]$MaxSearchDepth = 0,
     [switch]$KeepFixture
 )
 
@@ -29,13 +37,16 @@ $ErrorActionPreference = 'Continue'
 if ([string]::IsNullOrWhiteSpace($ScriptPath)) { $ScriptPath = Join-Path $PSScriptRoot 'discover-tools.ps1' }
 $script:Script = (Resolve-Path -LiteralPath $ScriptPath).Path
 $script:Results = New-Object System.Collections.Generic.List[psobject]
+# Prepended to every discovery so one depth governs the whole run; empty when -MaxSearchDepth is 0.
+$script:CommonDiscoverArgs = if ($MaxSearchDepth -gt 0) { @('-MaxSearchDepth', [string]$MaxSearchDepth) } else { @() }
 New-Item -ItemType Directory -Force -Path $FixtureRoot | Out-Null
 
 function Invoke-Discover {
     param([string]$Root, [string[]]$ExtraArgs = @())
 
+    $callArgs = @($script:CommonDiscoverArgs) + @($ExtraArgs)
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $raw = @(& $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $script:Script -ProductRoot $Root @ExtraArgs 2>&1)
+    $raw = @(& $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $script:Script -ProductRoot $Root @callArgs 2>&1)
     $stopwatch.Stop()
     $text = @($raw | ForEach-Object { [string]$_ })
     $map = @{}
@@ -89,10 +100,29 @@ function Add-Result {
     "{0,-6} {1,-34} expected[{2}] actual[{3}]" -f $status, $Id, $Expected, $Actual
 }
 
-# R1 cold discovery establishes the seed snapshot every later scenario copies.
+# R0 -SearchRootsOnly searches only what the caller named. The machine-wide sweep is what makes a
+# cold discovery cost minutes, and most questions -- "is the toolchain in this folder" -- do not
+# need it. Asserted on the scope the run reports rather than on which tools turned up: PATH lookup
+# still applies in both modes, so a tool on PATH cannot tell them apart.
 $seed = New-Product -Name 'seed'
-$cold = Invoke-Discover -Root $seed
+$narrowRoot = Join-Path $FixtureRoot 'narrow-tools'
+New-Item -ItemType Directory -Force -Path $narrowRoot | Out-Null
+$narrowArgs = @('-SearchRootsOnly', '-AdditionalSearchRoot', $narrowRoot)
+$narrow = Invoke-Discover -Root $seed -ExtraArgs $narrowArgs
+Add-Result -Id 'R0-narrow-declared' -Expected 'yes' -Actual (Get-Key $narrow 'searchrootsonly')
+# Exactly the one directory named, and no drive walked: a full run reports many roots and every
+# fixed drive, so removing the switch's effect turns both of these red immediately.
+Add-Result -Id 'R0-searches-only-named-root' -Expected '1' -Actual (Get-Key $narrow 'searchroots')
+Add-Result -Id 'R0-probes-no-drive' -Expected '0' -Actual (Get-Key $narrow 'probeddrives')
+"       R0 narrow run took $($narrow.Seconds)s"
+
+# R1 cold discovery establishes the seed snapshot every later scenario copies. It asks for reuse on
+# purpose: the only thing in the cache is R0's narrow snapshot, and a narrow snapshot must never be
+# accepted as evidence about the whole machine -- otherwise one fast scoped run would poison every
+# later full run into reporting tools as missing. Refusing it here is what makes this a cold run.
+$cold = Invoke-Discover -Root $seed -ExtraArgs @('-ReuseInventory')
 Add-Result -Id 'R1-cold-discovery' -Expected 'full-discovery' -Actual (Get-Key $cold 'reuse')
+Add-Result -Id 'R1-narrow-snapshot-not-reused-by-full-run' -Expected 'full-discovery' -Actual (Get-Key $cold 'reuse')
 "       R1 cold run took $($cold.Seconds)s, available=$(Get-Key $cold 'available') total=$(Get-Key $cold 'total')"
 
 # R2 a reuse hit must be fast and must say so.
@@ -131,7 +161,7 @@ $p6 = New-Product -Name 'ancient' -SeedFrom $seed
 $anc = Get-Json -Root $p6
 $anc.generated_at = '2020-01-01T00:00:00.0000000+08:00'
 Set-Json -Root $p6 -Value $anc
-$ancient = Invoke-Discover -Root $p6 -ExtraArgs @('-ReuseInventory')
+$ancient = Invoke-Discover -Root $p6 -ExtraArgs (@('-ReuseInventory') + $narrowArgs)
 Add-Result -Id 'R6-stale-rejected' -Expected 'full-discovery' -Actual (Get-Key $ancient 'reuse')
 
 # R7 the required same-batch existence spot-check: an uninstalled tool forces rediscovery.
@@ -140,6 +170,10 @@ $broken = Get-Json -Root $p7
 $victim = @($broken.tools | Where-Object { $_.available -eq $true -and $_.source -ne 'PowerShell built-in' })[0]
 $victim.path = 'C:\definitely-not-here\removed-tool.exe'
 Set-Json -Root $p7 -Value $broken
+# Deliberately a full-mode run: the existence spot-check is the last gate, so narrowing the scan
+# here would reject the cache one step earlier on changed inputs and the spot-check would never
+# fire -- the assertion below would then pass without testing anything. It cost one full scan and
+# it caught exactly that when this suite was first sped up.
 $uninstalled = Invoke-Discover -Root $p7 -ExtraArgs @('-ReuseInventory')
 Add-Result -Id 'R7-spotcheck-catches-removal' -Expected 'full-discovery' -Actual (Get-Key $uninstalled 'reuse')
 Add-Result -Id 'R7-reports-missing-count' -Expected '1' -Actual (Get-Key $uninstalled 'spotmissing')
@@ -151,14 +185,14 @@ Add-Result -Id 'R8-spotchecked-is-coverage' -Expected ([string]$expectedChecked)
 # R9 a row written by an older format must degrade to rediscovery, not kill the run.
 $p9 = New-Product -Name 'malformed-row' -SeedFrom $seed
 Set-Content -LiteralPath (Join-Path $p9 'product-state\tooling\TOOL-INVENTORY.json') -Encoding utf8 -Value '{ "generated_at": "2026-08-11T00:00:00.0000000+08:00", "product_root": "x", "host_tool_index": null, "tools": [ { "tool_id": "legacy-row" } ] }'
-$malformed = Invoke-Discover -Root $p9 -ExtraArgs @('-ReuseInventory')
+$malformed = Invoke-Discover -Root $p9 -ExtraArgs (@('-ReuseInventory') + $narrowArgs)
 Add-Result -Id 'R9-malformed-row-survives' -Expected 'full-discovery' -Actual (Get-Key $malformed 'reuse')
 Add-Result -Id 'R9-no-crash' -Expected 'clean' -Actual $(if ($malformed.Crashed) { 'crashed' } else { 'clean' })
 
 # R10 same for a null tools array.
 $p10 = New-Product -Name 'null-tools' -SeedFrom $seed
 Set-Content -LiteralPath (Join-Path $p10 'product-state\tooling\TOOL-INVENTORY.json') -Encoding utf8 -Value '{ "generated_at": "2026-08-11T00:00:00.0000000+08:00", "product_root": "x", "host_tool_index": null, "tools": null }'
-$nullTools = Invoke-Discover -Root $p10 -ExtraArgs @('-ReuseInventory')
+$nullTools = Invoke-Discover -Root $p10 -ExtraArgs (@('-ReuseInventory') + $narrowArgs)
 Add-Result -Id 'R10-null-tools-survives' -Expected 'full-discovery' -Actual (Get-Key $nullTools 'reuse')
 Add-Result -Id 'R10-no-crash' -Expected 'clean' -Actual $(if ($nullTools.Crashed) { 'crashed' } else { 'clean' })
 
@@ -167,7 +201,7 @@ $p11 = New-Product -Name 'truncated' -SeedFrom $seed
 $truncPath = Join-Path $p11 'product-state\tooling\TOOL-INVENTORY.json'
 $full = Get-Content -Raw -Encoding UTF8 -LiteralPath $truncPath
 [System.IO.File]::WriteAllText($truncPath, $full.Substring(0, [int]($full.Length / 3)))
-$truncated = Invoke-Discover -Root $p11 -ExtraArgs @('-ReuseInventory')
+$truncated = Invoke-Discover -Root $p11 -ExtraArgs (@('-ReuseInventory') + $narrowArgs)
 Add-Result -Id 'R11-truncated-rejected' -Expected 'full-discovery' -Actual (Get-Key $truncated 'reuse')
 
 # R12 the inventory must never be observed as absent while it is being rewritten, and no temp

@@ -1,5 +1,18 @@
 {
   "schema_version": 1,
   "skill_version": "0.2.0",
-  "records": []
+  "records": [
+    {
+      "path": "knowledge/candidates/exp-b9dd69e9c62c4d2da7e322999ebe822c.json",
+      "sha256": "3C7C74B6597E9BB71B709CB69A503786940C8FAC2384F987B163743CABA5D1AA"
+    },
+    {
+      "path": "knowledge/candidates/exp-6b8f42f54268437cbb204659daef5251.json",
+      "sha256": "216607E3CDDE997818EBBB2F96B078AF0FF4420AEDB10B7F968D72305E744C41"
+    },
+    {
+      "path": "knowledge/candidates/exp-554d160479c44676b6473a197b0a8104.json",
+      "sha256": "0BF942B9BF2CAFDDE66064645457375E362E2F55730172CAE2376AEF7E6A550E"
+    }
+  ]
 }

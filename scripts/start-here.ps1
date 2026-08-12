@@ -165,6 +165,9 @@ else {
     foreach ($item in $readiness.PendingForNext) {
         Write-Output ("     还缺: " + $item.Why)
     }
+    if ($readiness.ReadyToAdvance) {
+        Write-Output '     [可以收工] 本阶段该做的都齐了：下一步就是把它落地。先跑下面这条 update 命令建一个检查点，再继续；不要停在这一阶段反复加工。'
+    }
     if (@($readiness.PendingForNext | Where-Object { $_.Detail -like '*TOOL-INVENTORY*' }).Count -gt 0) {
         Write-Output ('     powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $scriptDir 'discover-tools.ps1') + '" -ProductRoot ' + $quotedRoot + ' -ReuseInventory')
     }

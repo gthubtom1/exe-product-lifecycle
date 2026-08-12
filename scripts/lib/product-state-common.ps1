@@ -454,6 +454,14 @@ function Get-LifecycleReadiness {
     $unmetItems = [object[]]$unmet.ToArray()
     $pendingItems = [object[]]$pendingForNext.ToArray()
 
+    # "This stage is a clean stopping point you have already earned the exit from." True only when
+    # there is a next rung to climb ($next), the current status is fully backed (nothing unmet) and
+    # everything the next rung needs is already present (nothing pending). It is the anti-drag
+    # signal: the moment a stage is complete the tooling can say "land it and move on" instead of
+    # letting an agent keep piling work onto a stage that is already done. A terminal or branch
+    # state has no $next, so it is never reported ready-to-advance.
+    $readyToAdvance = ($null -ne $next) -and ($unmetItems.Count -eq 0) -and ($pendingItems.Count -eq 0)
+
     return [pscustomobject]@{
         Known = ($null -ne $current)
         Status = $Status
@@ -462,6 +470,7 @@ function Get-LifecycleReadiness {
         NextAction = $nextAction
         Unmet = $unmetItems
         PendingForNext = $pendingItems
+        ReadyToAdvance = $readyToAdvance
     }
 }
 
