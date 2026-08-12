@@ -24,6 +24,26 @@ if ([string]::IsNullOrWhiteSpace($InstalledRoot)) {
     if ([string]::IsNullOrWhiteSpace($codexHome)) { $codexHome = Join-Path $HOME '.codex' }
     $InstalledRoot = Join-Path $codexHome 'skills\exe-product-lifecycle'
 }
+# Listed the other way round on purpose: this repository is text apart from a handful of binaries,
+# and an allow-list of text extensions silently mis-compares whatever nobody remembered to add --
+# CODEOWNERS and .gitkeep both slipped through one.
+$binaryExtensions = @('.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf', '.zip', '.exe', '.dll', '.bin')
+
+function Get-ComparableHash {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # An installed copy that is a clone gets its line endings from checkout, and the source tree
+    # does not have to agree. Comparing raw bytes would then report every text file as drifted
+    # forever, and the remedy it prints -- run the sync script -- is a command a clone refuses.
+    # Compare what the file says, not how the checkout spelled its newlines.
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if ([IO.Path]::GetExtension($Path).ToLowerInvariant() -in $binaryExtensions) {
+        return [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace('-', '')
+    }
+    $text = [Text.Encoding]::UTF8.GetString($bytes) -replace "`r`n", "`n"
+    return [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($text))).Replace('-', '')
+}
+
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('exe-lifecycle-install-' + [Guid]::NewGuid().ToString('N'))
 $destination = Join-Path $temp 'exe-product-lifecycle'
 try {
@@ -50,23 +70,30 @@ try {
     }
     else {
         $installed = (Resolve-Path -LiteralPath $InstalledRoot).Path.TrimEnd('\')
+        $installedIsClone = Test-Path -LiteralPath (Join-Path $installed '.git') -PathType Container
         $drift = New-Object System.Collections.Generic.List[string]
         foreach ($file in $sourceFiles) {
             $relative = $file.FullName.Substring($source.Length + 1)
             $target = Join-Path $installed $relative
             if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { [void]$drift.Add("missing:$relative"); continue }
-            if ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash) { [void]$drift.Add("stale:$relative") }
+            if ((Get-ComparableHash -Path $file.FullName) -ne (Get-ComparableHash -Path $target)) { [void]$drift.Add("stale:$relative") }
         }
         # Experience learned on this machine is expected to be here and not in the source, so it is
         # not drift. Counting it as drift would push a maintainer to "fix" it by deleting it.
         foreach ($targetFile in @(Get-ChildItem -LiteralPath $installed -Recurse -File)) {
             $relative = $targetFile.FullName.Substring($installed.Length + 1)
             if ($relative -match '^knowledge\\(candidates|verified|deprecated)\\[^\\]+\.json$') { continue }
+            if ($targetFile.Name -eq '.knowledge-write.lock') { continue }
             if ($relative -notin @($sourceFiles | ForEach-Object { $_.FullName.Substring($source.Length + 1) })) { [void]$drift.Add("extra:$relative") }
         }
         if ($drift.Count -gt 0) {
             foreach ($item in $drift) { Write-Output "DRIFT: $item" }
-            Write-Output "ERROR: 已安装副本和源目录不一致，Agent 实际加载的是旧版本。运行 scripts/sync-local-skill.ps1 同步后重试。"
+            if ($installedIsClone) {
+                Write-Output 'ERROR: 已安装副本和源目录不一致。装的那份是 clone，用 git pull 更新它（不要用同步脚本，它会拒绝）。'
+            }
+            else {
+                Write-Output 'ERROR: 已安装副本和源目录不一致，Agent 实际加载的是旧版本。运行 scripts/sync-local-skill.ps1 同步后重试。'
+            }
             Write-Output "RESULT: failed ($($drift.Count) drifted file(s) at $installed)"
             exit 1
         }
