@@ -1,0 +1,7 @@
+# The knowledge index, lock and every promoted experience are generated files, and the scripts
+# write them with LF. A Windows checkout with core.autocrlf=true hands the working tree CRLF
+# instead, so the next regeneration rewrites the same content with LF and git reports a change
+# that `git diff` shows as zero changed lines. That is a line-ending artifact, not stale content,
+# and it makes the "generated files are committed" check impossible to pass on a Windows runner.
+# Pin the checkout to what the generator writes.
+*.json text eol=lf

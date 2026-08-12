@@ -86,4 +86,11 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/rebuild-knowledge-index.ps1
-          if (git status --short) { throw 'Generated knowledge index or lock is stale' }
+          $dirty = @(git status --short)
+          if ($dirty.Count -gt 0) {
+            Write-Output '--- git status ---'
+            $dirty
+            Write-Output '--- git diff ---'
+            git diff
+            throw 'Generated knowledge index or lock is stale'
+          }
