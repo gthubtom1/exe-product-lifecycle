@@ -92,8 +92,8 @@ product-state/tooling/
 
 `TOOL-PLAN.yaml` 必须记录实际调用的 `tool_id`、绝对路径、版本、用途、输入、输出和验证命令。若路径改变，重新生成快照并更新计划；不要把旧路径继续当成可用。
 
-## 与现有 reverse-skill 工具索引的关系
+## 与宿主 Skill 仓库工具索引的关系
 
-当本技能位于现有 `reverse-skill/skills/` 下时，可以读取旁边的 `tool-index.json`，并把可用项作为路径证据。现有总路由、各逆向 Skill 和自举脚本仍由宿主项目管理；本技能只调用已发现的工具，不修改 `routing.json`、`MASTER-ROUTING.md` 或其他 Skill 的触发条件。
+当本技能被安装在某个宿主 Skill 仓库的 `skills/` 目录下、且该仓库自带 `tool-index.json` 时，可以读取旁边的索引，并把可用项作为路径证据。宿主的总路由、各逆向 Skill 和自举脚本仍由宿主项目管理；本技能只调用已发现的工具，不修改 `routing.json`、`MASTER-ROUTING.md` 或其他 Skill 的触发条件。
 
 当本技能被复制到其他 Agent 时，没有旁边的索引也能独立工作：使用自带发现脚本和当前 Agent 能访问的工具。这样“工具角色”保持通用，“本机路径”保持产品/主机本地，互不污染。

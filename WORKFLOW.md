@@ -95,7 +95,7 @@ instructions still apply, but product facts stay inside this product's
 Before saying that an analysis tool is missing, run
 `scripts/discover-tools.ps1 -ProductRoot <product-root> -ReuseInventory`. It checks PATH,
 common user/tool directories, and an adjacent `skills/tool-index.json` when the
-skill is inside the reverse-skill repository. Read the generated
+skill is installed inside a host skill repository that publishes one. Read the generated
 `product-state/tooling/TOOL-INVENTORY.md`, choose a tool by role from
 `references/toolchain.md`, optionally pass `-AdditionalSearchRoot`, and invoke
 the recorded path. This prevents a tool from being marked missing only because

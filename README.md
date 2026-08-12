@@ -1,60 +1,117 @@
-# exe-product-lifecycle
+# EXE Product Lifecycle
 
-一个面向 AI 智能体的 **Agent Skill**：维护并演进「Windows EXE 二次发行」产品的完整工作流——接入任意 EXE、记录并复用品牌/界面/联系方式/功能定制、用启动器（Launcher）控制入口、把授权需求交接给独立的授权平台、在上游更新时保住定制，并把脱敏后的多产品经验沉淀成可复用规则。
+给 AI 智能体使用的 **Windows EXE 二次发行**工作流 Skill。
 
-> 这是一个「技能（skill）」，不是可独立运行的程序。把它交给支持 Agent Skills 的 AI（Codex / Claude Code / Cursor 等），AI 读取根目录的 `SKILL.md` 后即按其中的流程工作。
+你交给它一个 EXE，它负责：建立这个产品的独立档案，记录品牌 / Logo / 界面 / 联系方式 / 功能定制，把入口收到 Launcher 下，把授权需求整理成交接资料给独立的授权平台，在上游发布新版时把你的定制原样迁移过去，并留下测试记录、发布包和可运行的回滚路径。
 
-## 运行前提
+所有产品事实都写在磁盘上的 `product-state/` 里，**不依赖聊天历史**——换一台电脑、换一个智能体、隔三个月再回来，读档案就能接着干。
 
-- **Windows** + **Windows PowerShell 5.1 或更高**。脚本使用注册表、`System32`、`.exe` 工具发现等 Windows 专属能力。
-- 这是由 skill 的领域决定的：它处理的对象就是 Windows EXE。Linux / macOS 上的 AI 能读懂 `SKILL.md` 的流程，但**无法执行**其中的 `.ps1` 脚本。
-- 无需额外安装依赖。分析类工具（反编译器等）由 `scripts/discover-tools.ps1` 在本机自动发现；缺失时会提示，绝不静默安装。
+## 它解决什么问题
 
-## 安装：把整个目录放进你所用 AI 的 skills 目录
+- **上游一发新版，定制就白做。** 定制被记录成带锚点的规则，而不是只存在于某个改好的 EXE 里；迁移时逐条重放，锚点找不到就报冲突，而不是悄悄退回原版外观。
+- **"假装接好了授权"。** 启动器与主程序的绑定强度必须在 `auth/LAUNCH-CONTRACT.yaml` 里明确定级（A 强绑定 / B 中等 / C 仅外壳），并给出实测级别与绕过风险；只有外壳的产品无法被记成强绑定。
+- **状态可以凭空声称。** 产品状态只能通过 `scripts/update-product-state.ps1` 改，它按 `assets/lifecycle-states.json` 校验证据、拒绝跳级，并把两份状态文件当一个事务写。
+- **改之前不知道能不能改。** `scripts/detect-protections.ps1` 先静态判定加壳、熵值、反调试、自校验和签名，由判定结果决定维护策略——它从不运行目标程序。
+- **经验只留在某个人的对话里。** 跨产品经验要经过脱敏、第二个真实产品复验、正负 Fixture 和绑定正文 Hash 的审核，才能进入共享知识库；自动检索只允许已审核的那一层。
 
-本仓库的**根目录本身就是一个 skill**（根目录有 `SKILL.md`）。安装 = 把整个目录放到对应工具的 skills 目录下，目录名保持 `exe-product-lifecycle`。
+## 安装
 
-**Codex**
+仓库地址：
 
-```bash
-git clone https://github.com/gthubtom1/exe-product-lifecycle "$HOME/.codex/skills/exe-product-lifecycle"
+```text
+https://github.com/gthubtom1/exe-product-lifecycle
 ```
 
-Windows 上即 `%USERPROFILE%\.codex\skills\exe-product-lifecycle`。仓库自带 `scripts/sync-local-skill.ps1`，可从任意本地副本同步到该位置并逐文件校验哈希。
+### 给智能体的一句话
 
-**Claude Code**
+把下面这段连同上面的地址一起发给任何支持 Skill 的智能体，它照做即可：
 
-```bash
-git clone https://github.com/gthubtom1/exe-product-lifecycle "$HOME/.claude/skills/exe-product-lifecycle"
+```text
+把 https://github.com/gthubtom1/exe-product-lifecycle 安装成我这台机器的全局 Skill：
+克隆到 <宿主的全局 skills 目录>/exe-product-lifecycle/，
+确保 SKILL.md 直接位于该目录下、文件夹名就叫 exe-product-lifecycle，装完告诉我怎么开始用。
 ```
 
-项目级可改放到 `<你的项目>/.claude/skills/exe-product-lifecycle`。
+### 各宿主的安装位置
 
-**Cursor**
+文件夹名必须**正好是** `exe-product-lifecycle`（与 `SKILL.md` 里的 `name` 一致），且 `SKILL.md` 必须**直接**躺在这个文件夹下，不能再套一层。
 
-放到 Cursor 的用户 skills 目录（通常是 `~/.cursor/skills/exe-product-lifecycle`），或按 Cursor 官方 Agent Skills 文档指定的位置。
+| 宿主 | 全局（所有项目可用） | 项目内 |
+| --- | --- | --- |
+| Cursor | `~/.cursor/skills/exe-product-lifecycle/` | `.cursor/skills/exe-product-lifecycle/` |
+| Claude Code / Claude Desktop | `~/.claude/skills/exe-product-lifecycle/` | `.claude/skills/exe-product-lifecycle/` |
+| Codex | `~/.codex/skills/exe-product-lifecycle/` | `.codex/skills/exe-product-lifecycle/` |
 
-> 各工具的 skills 目录约定可能调整，以其官方文档为准。唯一判定标准是：该目录下的 `exe-product-lifecycle/SKILL.md` 能被你的 AI 加载到。
+Windows 上 `~` 就是 `%USERPROFILE%`，例如 `C:\Users\你的用户名\.cursor\skills\exe-product-lifecycle\`。
 
-## 给 AI 的入口
+Cursor 出于兼容也会加载 `~/.claude/skills/` 和 `~/.codex/skills/`，所以三个宿主都在用的话，装一份到 `~/.codex/skills/` 通常就够了。
 
-- **`SKILL.md`** 是唯一入口和路由说明，AI 从这里开始。
-- 每次工作的第一步固定是运行 `scripts/start-here.ps1 -ProductRoot <产品文件夹> -UserRequest "<用户原话>"`：它只读，会逐条打印接下来该执行的命令，不要凭正文推断顺序。
-- 完整目录树、脚本参数与分模式流程见 `WORKFLOW.md`。
-
-## 装好后自检（可选）
+### 安装命令（PowerShell）
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-skill-layout.ps1
+# 换成你要装的宿主目录：.cursor / .claude / .codex
+$dest = "$env:USERPROFILE\.codex\skills\exe-product-lifecycle"
+git clone --depth 1 https://github.com/gthubtom1/exe-product-lifecycle.git $dest
 ```
 
-输出 `RESULT: passed` 表示目录结构、PowerShell 语法、JSON 语法和公开知识边界都正常。想跑更全的回归，见 `scripts/` 下的 `test-*.ps1`。
+以后更新：
+
+```powershell
+git -C "$env:USERPROFILE\.codex\skills\exe-product-lifecycle" pull
+```
+
+装完让智能体确认一下装对没有：`SKILL.md`、`WORKFLOW.md`、`scripts/start-here.ps1` 三个都能在那个目录里直接找到就对了。
+
+## Windows 前提
+
+- **只能在 Windows 上真正运行。** 二十多个脚本都是 PowerShell，用到注册表、`System32` 和 Windows 专用分析工具。在 macOS / Linux 上智能体能读懂流程，但脚本会失败。
+- **Windows PowerShell 5.1（系统自带）或 PowerShell 7 都可以**，两条通道都在 CI 上跑。
+- **Python 3 只有维护者需要**：仅 `scripts/validate-schema-links.py` 这一个校验脚本用到，日常使用这个 Skill 不需要 Python。
+- **不需要管理员权限**，除非要启动本地临时授权 mock 服务器（`scripts/mock-authorization-server.ps1`）——Windows 的 http.sys 注册本地 URL 通常要管理员或 `netsh` 预留；被拒时脚本会明确区分"权限不足"和"端口被占用"，不会让你白换端口。
+- **不联网装任何东西。** 分析工具由 `scripts/discover-tools.ps1` 在本机所有磁盘上发现；找不到会问你要位置，绝不静默安装。
+
+## 零基础用户怎么用
+
+你不需要懂 Git、PowerShell、产品编号、YAML 或测试命令。最少只要一个 EXE；安装包、DLL、截图和说明文件有就一起给，没有也能先开始。
+
+1. 把 EXE 放进一个产品文件夹，其他材料有就一起放；
+2. 用普通话告诉智能体你想保留、修改、更新还是发布什么；
+3. 只在它问到会改变结果的问题时回答。
+
+直接说这句就能开始：
+
+```text
+接入这个 EXE，保留现有 UI、品牌、联系方式和功能；以后收到新版时继续维护，并给我测试和回滚结果。
+```
+
+如果发现智能体没按流程走（比如没建档就开始分析、把"继续维护"当成只汇报进度），对它说：
+
+```text
+先运行 scripts/start-here.ps1，按它打印的顺序做。
+```
+
+那个脚本是只读的，会把"现在该执行哪条命令"逐条打印出来。
+
+## 可进化经验
+
+```text
+新 EXE 产品证据
+  -> 产品本地 learning/ 草稿和私有追溯
+  -> 脱敏 candidate
+  -> 第二个真实产品复验
+  -> 正向 Fixture + 负向 Fixture
+  -> 绑定当前正文 Hash 的审核
+  -> verified 共享模式
+  -> deprecated 废弃审计
+```
+
+后续智能体只能自动检索 `verified`。产品名、原始 EXE Hash、路径、地址、授权字段和客户数据不进入共享知识库。完整规则见 `references/knowledge-lifecycle.md`。
 
 ## 顶层结构
 
 | 路径 | 作用 |
 | --- | --- |
-| `SKILL.md` | skill 入口与路由边界 |
+| `SKILL.md` | Skill 入口与路由边界，智能体从这里开始 |
 | `WORKFLOW.md` | 完整目录树、脚本参数、分模式流程 |
 | `scripts/` | PowerShell 脚本：产品状态机、输入登记、保护探测、工具发现、知识生命周期、自检测试 |
 | `assets/` | 状态定义 `lifecycle-states.json` 与产品脚手架 `product-scaffold/` |
@@ -62,6 +119,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-skill-layou
 | `knowledge/` | 公开、脱敏的可复用经验库（仅 JSON，带公开边界门禁） |
 | `agents/openai.yaml` | Codex 触发配置 |
 
+## 维护者验证
+
+以下命令是维护这个 Skill 的人用的，不是普通用户的使用步骤：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-skill-layout.ps1
+python scripts/validate-schema-links.py
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-evolution.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-product-scaffold.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-product-state-gates.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-detect-protections.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-mock-authorization.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-mock-authorization-http.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-tool-inventory-reuse.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-install-parity.ps1
+```
+
+`test-install-parity.ps1` 的最后一段会比对**这台机器上智能体实际加载的那份副本**。它报 `DRIFT:` 就说明源目录已经改好但装的还是旧版，运行下面这条同步：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-local-skill.ps1
+```
+
 ## 许可
 
-MIT，见 [`LICENSE`](LICENSE)。本 skill 衍生自 reverse-skill 工具集。
+MIT，见 [`LICENSE`](LICENSE)。本 Skill 衍生自作者自用的逆向工具集。
