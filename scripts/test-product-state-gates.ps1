@@ -349,6 +349,18 @@ else {
     Write-Output 'SKIP   SN1-short-path-product-passes    could not create an 8.3 alias (needs an elevated shell)'
 }
 
+# PK -- publishing is what turns "this machine learned something" into "the knowledge base learned
+# something". A copy that was installed by copying files has no history to publish into, and the
+# person hitting that needs the clone command, not a PowerShell stack trace.
+$pk = Join-Path $FixtureRoot 'pk-not-a-repo'
+New-Item -ItemType Directory -Force -Path $pk | Out-Null
+$run = Invoke-Script -Name 'publish-knowledge.ps1' -ScriptArgs @('-SkillRoot', $script:Skill, '-DryRun')
+Assert-Match -Name 'PK1-dry-run-publishes-nothing' -Text $run.Text -Pattern 'RESULT: (nothing_to_publish|dry_run)'
+Add-Result -Name 'PK1-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
+$run = Invoke-Script -Name 'publish-knowledge.ps1' -ScriptArgs @('-SkillRoot', $pk, '-DryRun')
+Assert-Match -Name 'PK2-non-repo-names-clone' -Text $run.Text -Pattern 'git clone'
+Add-Result -Name 'PK2-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
+
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''
 Write-Output ("RESULT: {0} passed, {1} failed" -f @($script:Results | Where-Object { $_.Passed }).Count, $failed.Count)

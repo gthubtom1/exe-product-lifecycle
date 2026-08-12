@@ -107,6 +107,22 @@ git -C "$env:USERPROFILE\.codex\skills\exe-product-lifecycle" pull
 
 后续智能体只能自动检索 `verified`。产品名、原始 EXE Hash、路径、地址、授权字段和客户数据不进入共享知识库。完整规则见 `references/knowledge-lifecycle.md`。
 
+### 让经验不随这台机器一起消失
+
+经验写在**正在运行的那一份**技能副本旁边，而智能体运行的是安装副本。所以安装方式决定了经验会不会丢：
+
+- **用 `git clone` 安装并保留 `.git`**（上面的安装命令就是这么写的）。这样安装副本本身就是仓库，学到的东西一开始就在版本控制里。
+- **更新代码用 `git pull`**，顺带把别人发布的经验一起取回来。
+- **发布这台机器学到的经验**：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publish-knowledge.ps1
+```
+
+它会重建索引、跑公开内容门禁（带产品身份、哈希、地址或占位符的记录一律拒绝），然后**只提交 `knowledge/`** 并推送。加 `-DryRun` 可以先看它打算发什么。
+
+如果安装副本是复制进去的、不是 clone，`publish-knowledge.ps1` 会直接告诉你没有地方可发，并给出改用 clone 的命令——因为那种副本一旦丢失，学到的东西哪里都没有备份。
+
 ## 顶层结构
 
 | 路径 | 作用 |
@@ -136,11 +152,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-tool-inventory-
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-install-parity.ps1
 ```
 
-`test-install-parity.ps1` 的最后一段会比对**这台机器上智能体实际加载的那份副本**。它报 `DRIFT:` 就说明源目录已经改好但装的还是旧版，运行下面这条同步：
+`test-install-parity.ps1` 的最后一段会比对**这台机器上智能体实际加载的那份副本**。它报 `DRIFT:` 就说明源目录已经改好但装的还是旧版。
+
+装的那份是 clone 就用 `git pull` 更新；是从别处复制过去的才用同步脚本：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-local-skill.ps1
 ```
+
+同步脚本对着 clone 会直接拒绝（复制会把 clone 变成一直有改动的状态），并且**不会**删掉安装副本里独有的 `knowledge/` 记录——那些是这台机器学到、还没发布的东西，别处没有备份。
 
 ## 许可
 

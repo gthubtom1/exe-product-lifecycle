@@ -21,6 +21,7 @@ $destination = (Resolve-Path -LiteralPath $DestinationRoot).Path.TrimEnd('\')
 if ($destination -eq $source -or $destination.StartsWith($source + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'DestinationRoot must be outside SourceRoot' }
 
 $excludedTop = @('.git')
+$preservedLearning = New-Object System.Collections.Generic.List[string]
 $sourceFiles = @(Get-ChildItem -LiteralPath $source -Recurse -File | Where-Object {
     $relative = $_.FullName.Substring($source.Length + 1)
     ($relative.Split('\')[0] -notin $excludedTop) -and $_.Name -ne '.knowledge-write.lock'
@@ -31,6 +32,16 @@ $sourceRelative = @($sourceFiles | ForEach-Object { $_.FullName.Substring($sourc
 # tree that cannot pass its own gate is how a half-written script becomes the
 # live version while sync still reports success, so the gate runs first and a
 # failure refuses the copy outright rather than warning about it.
+# A destination that is a clone updates itself with git pull, and its history is what makes the
+# experience captured there survivable. Copying files over it would leave it permanently dirty and
+# make the next publish ambiguous about what is actually being published.
+if (Test-Path -LiteralPath (Join-Path $destination '.git') -PathType Container) {
+    Write-Output "错误: 目标是一个 git clone，不能用复制的方式覆盖它: $destination"
+    Write-Output '原因: clone 靠 git pull 更新；复制会把它变成一直有改动的状态，之后也说不清发布的到底是什么。'
+    Write-Output '怎么办: 更新代码用 git pull；发布这台机器学到的经验用 scripts/publish-knowledge.ps1。'
+    exit 1
+}
+
 $layoutGate = Join-Path $source 'scripts\validate-skill-layout.ps1'
 if (-not (Test-Path -LiteralPath $layoutGate -PathType Leaf)) {
     Write-Output "错误: 找不到技能自检脚本，已拒绝同步: $layoutGate"
@@ -56,7 +67,20 @@ if ($PSCmdlet.ShouldProcess($destination, 'Synchronize EXE lifecycle skill files
     }
     foreach ($targetFile in @(Get-ChildItem -LiteralPath $destination -Recurse -File)) {
         $relative = $targetFile.FullName.Substring($destination.Length + 1)
-        if ($relative -notin $sourceRelative) { Remove-Item -LiteralPath $targetFile.FullName -Force }
+        if ($relative -in $sourceRelative) { continue }
+        # The installed copy is where the agent actually works, so it is where new experience is
+        # first written. Mirroring a delete for anything the source happens not to have would throw
+        # away the one thing this skill is supposed to accumulate -- and it is unrecoverable,
+        # because until it is published nothing else has a copy. Keep it and say so.
+        if ($relative -match '^knowledge\\(candidates|verified|deprecated)\\[^\\]+\.json$') {
+            [void]$preservedLearning.Add($relative)
+            continue
+        }
+        # Belt and braces: a hidden directory is not enumerated above today, so a clone's history
+        # is not actually at risk right now. It is one -Force away from being deleted file by file,
+        # and an installed copy that is a clone is exactly what makes learning survive.
+        if ($relative.Split('\')[0] -in $excludedTop) { continue }
+        Remove-Item -LiteralPath $targetFile.FullName -Force
     }
 }
 
@@ -72,3 +96,10 @@ Write-Output 'RESULT: local_skill_synchronized'
 Write-Output "source=$source"
 Write-Output "destination=$destination"
 Write-Output "file_count=$($sourceFiles.Count)"
+Write-Output "preserved_learning=$($preservedLearning.Count)"
+foreach ($item in $preservedLearning) {
+    Write-Output "  保留（安装副本独有的经验，源目录没有）: $item"
+}
+if ($preservedLearning.Count -gt 0) {
+    Write-Output '  这些经验只存在于这台机器上。运行 scripts/publish-knowledge.ps1 把它们发布出去，否则换台机器就没有。'
+}
