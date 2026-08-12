@@ -1,0 +1,22 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+# 首次分析结束后必须选定「最快达到用户可实测复刻」的路线。
+# 没有选定路线就进入长 Fixture / 回归 / 打包，是本技能要挡住的头号漂移。
+chosen_route: "UNKNOWN"
+allowed_routes:
+  - "SOURCE_AVAILABLE"
+  - "RESOURCE_OVERLAY"
+  - "BINARY_PATCH_RECORD"
+  - "WRAPPER_LAUNCHER"
+  - "REBUILD_REQUIRED"
+route_definitions:
+  SOURCE_AVAILABLE: "拿得到等价源码/资源/构建链，复刻保真度最高。"
+  RESOURCE_OVERLAY: "在原核心外覆盖品牌/资源，可重放，不改核心构建。"
+  BINARY_PATCH_RECORD: "有版本绑定、可复现的二进制差分补丁记录。"
+  WRAPPER_LAUNCHER: "外壳/适配器只控制入口、授权、更新、配置，核心仍是原程序；是合法候选，不等于源码式重建。"
+  REBUILD_REQUIRED: "必须重建源码/构建链，成本最高。"
+# 选路线不能只看首测最快：先过 交付类型/覆盖率/真实副作用/可回滚/可重放 五关，再在合格里取最快。
+time_to_first_user_test: "UNVERIFIED"
+rollback_path: "UNVERIFIED"
+route_rationale: "UNVERIFIED"
+source_of_truth: "product-state/analysis/ROUTE-DECISION.yaml"

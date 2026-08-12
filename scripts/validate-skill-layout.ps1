@@ -13,19 +13,45 @@ $skillPath = Join-Path $root 'SKILL.md'
 if (-not (Test-Path -LiteralPath $skillPath -PathType Leaf)) { [void]$errors.Add('SKILL.md is missing') }
 else {
     $skill = Get-Content -Raw -Encoding UTF8 -LiteralPath $skillPath
-    if ($skill -notmatch '(?s)^---\r?\nname:\s*exe-product-lifecycle\r?\ndescription:\s*.+?\r?\n---\r?\n') { [void]$errors.Add('SKILL.md frontmatter is invalid') }
+    # Validate the PORTABLE trigger every agent reads (Agent Skills open standard: name + description),
+    # tolerating extra standard fields such as compatibility / license. The old regex demanded exactly
+    # "name then description then ---", so adding a standard field would have read as invalid frontmatter,
+    # and it never enforced name == directory. openai.yaml is a Codex-only mirror, no longer required here.
+    $frontmatter = [regex]::Match($skill, '(?s)^---\r?\n(.*?)\r?\n---\r?\n')
+    if (-not $frontmatter.Success) { [void]$errors.Add('SKILL.md frontmatter block is missing (--- ... ---)') }
+    else {
+        $frontmatterBody = $frontmatter.Groups[1].Value
+        if ($frontmatterBody -notmatch '(?m)^name:\s*exe-product-lifecycle\s*$') { [void]$errors.Add('SKILL.md frontmatter name must equal the skill directory name (exe-product-lifecycle)') }
+        if ($frontmatterBody -notmatch '(?m)^description:\s*\S') { [void]$errors.Add('SKILL.md frontmatter description is empty (it is the portable trigger every agent reads)') }
+    }
     if ((Get-Content -Encoding UTF8 -LiteralPath $skillPath).Count -gt 500) { [void]$errors.Add('SKILL.md exceeds 500 lines') }
 }
 
-foreach ($required in @('WORKFLOW.md', 'agents/openai.yaml', 'references/knowledge-lifecycle.md', 'knowledge/INDEX.json', 'knowledge/knowledge.lock.json', 'assets/lifecycle-states.json', 'scripts/lib/product-state-common.ps1', 'scripts/update-product-state.ps1', 'scripts/start-here.ps1', 'scripts/detect-protections.ps1', 'scripts/lib/mock-auth-core.ps1', 'scripts/mock-authorization-server.ps1')) {
+foreach ($required in @('WORKFLOW.md', 'references/knowledge-lifecycle.md', 'knowledge/INDEX.json', 'knowledge/knowledge.lock.json', 'assets/lifecycle-states.json', 'scripts/lib/product-state-common.ps1', 'scripts/update-product-state.ps1', 'scripts/start-here.ps1', 'scripts/detect-protections.ps1', 'scripts/lib/mock-auth-core.ps1', 'scripts/mock-authorization-server.ps1')) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $required) -PathType Leaf)) { [void]$errors.Add("required skill file is missing: $required") }
 }
 
 foreach ($script in @(Get-ChildItem -LiteralPath (Join-Path $root 'scripts') -Recurse -File -Filter '*.ps1')) {
     $tokens = $null
     $parseErrors = $null
-    [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
+    $scriptAst = [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
     foreach ($parseError in @($parseErrors)) { [void]$errors.Add("PowerShell parse error $($script.Name):$($parseError.Extent.StartLineNumber): $($parseError.Message)") }
+
+    # Assigning to a reserved automatic variable ($pid, $args, ...) silently shadows it and has
+    # repeatedly broken scripts; a clean parse never flagged it (the assignment is valid syntax). The
+    # AST is already in hand, so walk it for assignments whose left-hand side is a reserved automatic.
+    if ($null -ne $scriptAst) {
+        $reservedAuto = @('pid', 'args', 'input', 'error', 'host', 'home', 'pwd', 'matches', 'this', 'psitem')
+        foreach ($assignment in @($scriptAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true))) {
+            $lhs = $assignment.Left
+            if ($lhs -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                $variableName = $lhs.VariablePath.UserPath
+                if ($reservedAuto -contains $variableName.ToLowerInvariant()) {
+                    [void]$errors.Add("assigns to reserved automatic variable `$$variableName (shadows it; breaks on Windows PowerShell): scripts/$($script.Name):$($assignment.Extent.StartLineNumber)")
+                }
+            }
+        }
+    }
 
     # Windows PowerShell 5.1 decodes a BOM-less .ps1 with the machine's ANSI codepage, so a script
     # holding Chinese text parses here (ACP 65001) and dies with "Missing ')'" on an ordinary

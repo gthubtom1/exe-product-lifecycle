@@ -21,9 +21,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ProductRoot,
 
-    [ValidateSet('INIT', 'BASELINE_CREATED', 'ANALYZED', 'CUSTOMIZATION_RECORDED', 'AUTH_HANDOFF_READY',
-        'AUTH_CONTRACT_READY', 'BUILD_READY', 'VERIFIED_SIMULATION', 'VERIFIED', 'RELEASED',
-        'MIGRATION_REQUIRED', 'ROLLBACK_READY')]
+    # No [ValidateSet] here: it would be a second hardcoded copy of the status list -- the ISSUE-096
+    # drift. $Status is validated against the lifecycle table in the body instead (PowerShell 5.1
+    # cannot feed a runtime source into a [ValidateSet] attribute).
     [string]$Status,
 
     [ValidateSet('bootstrap', 'update', 'status', 'resume', 'release', 'rollback')]
@@ -66,6 +66,16 @@ foreach ($required in @($statePath, $indexPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw (New-UserFacingError -Message "产品档案不完整，缺少: $required" `
             -Hint '恢复上一个可用备份，或重新运行首次接入补齐模板文件。')
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($Status)) {
+    # Validated against the lifecycle table, not a [ValidateSet] literal: a second hardcoded copy of
+    # the status list is the ISSUE-096 drift. Fires only for a non-empty -Status, so -ResumeJournal
+    # and blocking-item-only calls are unaffected.
+    $validStatuses = @((Get-LifecycleTable).states | ForEach-Object { [string]$_.status })
+    if ($validStatuses -notcontains $Status) {
+        throw (New-UserFacingError -Message "不认识的状态: $Status" `
+            -Hint ("状态必须是下列之一: " + ($validStatuses -join ', ')))
     }
 }
 $journalPath = Join-Path $stateRoot '.state-journal.json'
@@ -196,6 +206,10 @@ try {
     if ($targetStatus -ne $fromStatus) {
         $newStateText = Set-YamlScalar -Text $newStateText -Key 'status' -Value $targetStatus
         $newIndexText = [regex]::Replace($newIndexText, '(?m)^(- 当前状态:\s*`)[^`]*(`)', ('${1}' + $targetStatus + '${2}'))
+        # RV-R2 hole B: a -Force override must leave a mark ON DISK, not only in the output JSON, so a
+        # forced state is no longer byte-identical to an earned one. Written on every transition so it
+        # cannot go stale -- a later clean (non-forced) transition resets it to false.
+        $newStateText = Set-YamlScalar -Text $newStateText -Key 'gate_overridden' -Value $(if ($gateOverridden) { 'true' } else { 'false' })
         if ($targetStatus -in @('VERIFIED', 'VERIFIED_SIMULATION', 'RELEASED')) {
             $newStateText = Set-YamlScalar -Text $newStateText -Key 'last_verified_at' -Value (Get-Date -Format 'yyyy-MM-dd')
         }

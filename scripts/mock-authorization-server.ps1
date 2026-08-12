@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 
 # Local temporary authorization server -- MOCK ONLY (acceptance tier 1).
 #
@@ -18,11 +18,21 @@
 param(
     [int]$Port = 8787,
     [string]$BindAddress = '127.0.0.1',
+    [switch]$AllowNonLoopback,
     [switch]$Quiet
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# RV-R4 L1: this is an UNAUTHENTICATED mock that hands a session token and release material to anyone
+# who asks. Bound to loopback that is a local test convenience; bound to 0.0.0.0 it is an open endpoint
+# on the network. Refuse a non-loopback bind unless the caller explicitly opts in and owns the risk.
+if ($BindAddress -notin @('127.0.0.1', 'localhost', '::1') -and -not $AllowNonLoopback) {
+    Write-Output "错误: -BindAddress $BindAddress 不是回环地址。这是一个无鉴权的 MOCK 授权服务器，绑到非回环地址会把它暴露到网络。"
+    Write-Output '怎么办: 用默认的 127.0.0.1；确有必要暴露时显式加 -AllowNonLoopback 并自负其责（切勿用于生产或打包）。'
+    exit 1
+}
 
 . (Join-Path $PSScriptRoot 'lib\mock-auth-core.ps1')
 

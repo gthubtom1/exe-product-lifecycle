@@ -284,7 +284,11 @@ if (Test-Path -LiteralPath $statePath -PathType Leaf) {
     if ($coreMatch.Success) {
         $stateCoreName = $coreMatch.Groups[1].Value
     }
-    $allowedStatuses = @('INIT', 'BASELINE_CREATED', 'ANALYZED', 'CUSTOMIZATION_RECORDED', 'AUTH_HANDOFF_READY', 'AUTH_CONTRACT_READY', 'BUILD_READY', 'VERIFIED_SIMULATION', 'VERIFIED', 'RELEASED', 'MIGRATION_REQUIRED', 'ROLLBACK_READY')
+    # Derived from the lifecycle table, never a second hardcoded copy: a status list kept in two
+    # places is exactly how ISSUE-096 happened -- the table gained a state this copy lacked, so a
+    # legitimate status read back as unrecognized. One source means a state added to
+    # lifecycle-states.json is recognized here automatically.
+    $allowedStatuses = @((Get-LifecycleTable).states | ForEach-Object { [string]$_.status })
     if ($allowedStatuses -notcontains $stateStatus) {
         $errors.Add('STATE.yaml has no recognized status')
     }
@@ -561,6 +565,24 @@ function Get-MatrixPassRows {
         }
     }
     return $rows
+}
+
+function Get-ThroughlineResultCells {
+    param([Parameter(Mandatory = $true)][string]$Text)
+
+    # The last cell of every data row in the 关键验收 table is its 结果/result verdict. Only rows whose
+    # last cell is a recognized verdict are counted, so the header (结果) and the --- separator drop out
+    # without hard-coding their position, and prose or code-fence lines never look like a row.
+    $known = @('PASS', 'PASSED', 'PASS_SIMULATION', 'PENDING', 'FAIL', 'FAILED', 'UNVERIFIED')
+    $results = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line -notmatch '^\s*\|') { continue }
+        $cells = @(($line.Trim().Trim('|') -split '\|') | ForEach-Object { $_.Trim().Trim('`').Trim() })
+        if ($cells.Count -lt 2) { continue }
+        $last = $cells[$cells.Count - 1].ToUpperInvariant()
+        if ($known -contains $last) { [void]$results.Add($last) }
+    }
+    return $results
 }
 
 function Get-YamlListItems {
@@ -870,6 +892,118 @@ if (Test-Path -LiteralPath $currentReleasePath -PathType Leaf) {
     }
 }
 
+# Through-line evidence. Nothing read VERIFICATION-RECORD.md before this, so a real VERIFIED could
+# stand on an all-PENDING scaffold -- a fidelity label plus some TEST-MATRIX text was enough. That is
+# the second half of RV-A#1: the narrow gate stealing the wide goal. A real VERIFIED/RELEASED must
+# show the user-operation through-line (启动 -> 授权 -> 进入核心 -> 观察 -> 回滚) actually PASSED, judged
+# from the 关键验收 result column and the overall conclusion, so deleting the evidence cannot pass it.
+$verificationRecordPath = Join-Path $stateRoot 'reports/VERIFICATION-RECORD.md'
+if ($stateStatus -in @('VERIFIED', 'RELEASED')) {
+    if (-not (Test-Path -LiteralPath $verificationRecordPath -PathType Leaf)) {
+        $errors.Add('real verified product has no reports/VERIFICATION-RECORD.md through-line record')
+    }
+    else {
+        $recordText = Read-StateText -Path $verificationRecordPath
+        $throughResults = @(Get-ThroughlineResultCells -Text $recordText)
+        if ($throughResults.Count -eq 0) {
+            $errors.Add('VERIFICATION-RECORD.md 关键验收 表里没有任何可判定的结果行；真实 VERIFIED 需要逐条走通用户操作 through-line（启动/授权/进入核心/回滚）')
+        }
+        else {
+            $throughNotPass = @($throughResults | Where-Object { $_ -ne 'PASS' })
+            if ($throughNotPass.Count -gt 0) {
+                $errors.Add("VERIFICATION-RECORD.md 关键验收 仍有未通过的行（$($throughNotPass -join ', ')）；真实 VERIFIED 的启动/授权/进入核心/回滚每一步都必须 PASS（PASS_SIMULATION 只算模拟）")
+            }
+        }
+        $overallMatch = [regex]::Match($recordText, '(?im)overall_result`?\s*:\s*`?\s*([A-Za-z_]+)')
+        $overallResult = if ($overallMatch.Success) { $overallMatch.Groups[1].Value.ToUpperInvariant() } else { '' }
+        if ($overallResult -ne 'PASS') {
+            $errors.Add("VERIFICATION-RECORD.md overall_result 不是 PASS（当前: $(if ([string]::IsNullOrWhiteSpace($overallResult)) { '缺失' } else { $overallResult })）；真实 VERIFIED 必须给出通过结论")
+        }
+    }
+}
+
+# Runnable rollback (RV-C-G3). requiredFiles only proved the runbook FILE exists; its content was never
+# read, so a real VERIFIED could ship the <ROLLBACK_COMMAND> template with an UNVERIFIED target -- a
+# rollback that is a promise, not a procedure. A real VERIFIED/RELEASED rollback must be runnable and
+# pinned: no angle-bracket command placeholders left, and a real 64-hex package hash so it points at a
+# saved, verified prior release rather than "just reinstall the old one". This is the runnable backing
+# under the 回滚 row that the through-line gate already forces to PASS.
+$rollbackRunbookPath = Join-Path $stateRoot 'rollback/ROLLBACK-RUNBOOK.md'
+if ($stateStatus -in @('VERIFIED', 'RELEASED') -and (Test-Path -LiteralPath $rollbackRunbookPath -PathType Leaf)) {
+    $rollbackText = Read-StateText -Path $rollbackRunbookPath
+    $rollbackPlaceholders = @([regex]::Matches($rollbackText, '<[A-Za-z0-9_]+>') | ForEach-Object { $_.Value } | Select-Object -Unique)
+    if ($rollbackPlaceholders.Count -gt 0) {
+        $errors.Add("ROLLBACK-RUNBOOK.md 还留着命令占位符（$($rollbackPlaceholders -join ', ')）；真实 VERIFIED 的回滚必须是能真跑的命令，不能是模板")
+    }
+    $runbookHexes = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($hexMatch in [regex]::Matches($rollbackText, '[0-9A-Fa-f]{64}')) { [void]$runbookHexes.Add($hexMatch.Value.ToUpperInvariant()) }
+    if ($runbookHexes.Count -eq 0) {
+        $errors.Add('ROLLBACK-RUNBOOK.md 没有登记回滚目标包的 SHA-256（64 位）——回滚必须指向已保存、已校验的上一条 Release，而不是“重新安装旧版”')
+    }
+    else {
+        # RV-R2 bypass #4: "some 64-hex appears" was satisfiable by pasting any hex (rollback theater).
+        # The rollback hash must point at a REAL preserved package: at least one 64-hex in the runbook
+        # must equal the Get-FileHash of a file preserved under product-state/artifacts (rollback /
+        # maintained / upstream / patches). A hash with no package behind it is not a rollback.
+        $rollbackBound = $false
+        foreach ($rollbackSub in @('artifacts\rollback', 'artifacts\maintained', 'artifacts\upstream', 'artifacts\patches')) {
+            $rollbackSubDir = Join-Path $stateRoot $rollbackSub
+            if (-not (Test-Path -LiteralPath $rollbackSubDir -PathType Container)) { continue }
+            foreach ($rollbackPkg in @(Get-ChildItem -LiteralPath $rollbackSubDir -Recurse -File -ErrorAction SilentlyContinue)) {
+                if ($runbookHexes.Contains((Get-FileHash -LiteralPath $rollbackPkg.FullName -Algorithm SHA256).Hash.ToUpperInvariant())) { $rollbackBound = $true; break }
+            }
+            if ($rollbackBound) { break }
+        }
+        if (-not $rollbackBound) {
+            $errors.Add('ROLLBACK-RUNBOOK.md 里的 64 位哈希没有对应任何已保存的回滚包（product-state/artifacts/rollback|maintained|upstream|patches 下无文件与之哈希一致）——回滚必须指向真实存在的包')
+        }
+    }
+}
+
+# Evidence ledger is real, not decorative (RV-C-G4/G1). BUILD_READY only asked that its status be
+# settled; entries: [] was never read and its own rule static_is_not_runtime_proof was never enforced.
+# A real VERIFIED/RELEASED must carry at least one ledger entry at a RUNTIME evidence level
+# (locally_exercised / dynamic_success): "the files are present" (static_present) is not "it ran".
+$evidenceLedgerPath = Join-Path $stateRoot 'EVIDENCE-LEDGER.yaml'
+if ($stateStatus -in @('VERIFIED', 'RELEASED') -and (Test-Path -LiteralPath $evidenceLedgerPath -PathType Leaf)) {
+    $ledgerText = Read-StateText -Path $evidenceLedgerPath
+    if ((Get-YamlListCount -Text $ledgerText -Key 'entries') -le 0) {
+        $errors.Add('EVIDENCE-LEDGER.yaml 的 entries 为空——真实 VERIFIED 必须登记至少一条运行期证据，而不是空台账')
+    }
+    elseif ($ledgerText -notmatch '(?im)evidence_level\s*:\s*["'']?(locally_exercised|dynamic_success)\b') {
+        $errors.Add('EVIDENCE-LEDGER.yaml 没有任何运行期证据（locally_exercised/dynamic_success）——static_present 只是“文件在”，不等于“真的跑起来了”')
+    }
+    else {
+        # Fabricate-from-nothing defense (RV-R2). The two checks above only read text, so a runtime
+        # level could be typed with nothing behind it -- exactly the bypass that pushed a 30-byte fake
+        # core to a green VERIFIED. A runtime claim must now be BOUND to a real artifact: at least one
+        # entry must carry path + sha256 pointing at a file under product-state/ that exists and whose
+        # actual Get-FileHash equals the recorded one. This raises the bar from "type a line" to
+        # "produce a hash-consistent artifact file" and leaves that file on disk for a human or a
+        # downstream step to inspect. (A determined forger can still author a fake file that matches its
+        # own recorded hash; defeating that needs trusted execution and is out of a static gate's reach.)
+        $ledgerBound = 0
+        foreach ($ledgerRecord in @(Get-ManifestRecords -Text $ledgerText | Where-Object { ($_.PSObject.Properties.Name -contains 'path') -and ($_.PSObject.Properties.Name -contains 'sha256') })) {
+            $ledgerResolved = Resolve-ProductRelativePath -Relative ([string]$ledgerRecord.path)
+            if (-not $ledgerResolved.Inside) { continue }
+            if (-not (Test-Path -LiteralPath $ledgerResolved.FullPath -PathType Leaf)) { continue }
+            $ledgerActual = (Get-FileHash -LiteralPath $ledgerResolved.FullPath -Algorithm SHA256).Hash.ToUpperInvariant()
+            if ($ledgerActual -eq ([string]$ledgerRecord.sha256).ToUpperInvariant()) { $ledgerBound++ }
+        }
+        if ($ledgerBound -eq 0) {
+            $errors.Add('EVIDENCE-LEDGER.yaml 的运行期证据没有绑定真实产物：至少要有一条 entry 带 path + sha256，指向 product-state/ 下真实存在且哈希一致的证据文件——纯文本声明（凭空捏造）判失败')
+        }
+    }
+}
+
+# Override is not verification (RV-R2 hole B). update-product-state.ps1 -Force can move a product past
+# a gate the evidence does not satisfy; it now records gate_overridden: true on disk. A real
+# VERIFIED/RELEASED must NOT ship carrying that mark -- to reach it for real the evidence gates have to
+# pass on their own (a clean transition resets the mark to false). A missing field reads as not-forced.
+if ($stateStatus -in @('VERIFIED', 'RELEASED') -and (Get-YamlScalar -Text $stateText -Key 'gate_overridden') -match '^(?i)\s*true\s*$') {
+    $errors.Add('STATE.yaml gate_overridden=true——这个 VERIFIED/RELEASED 是 -Force 强推的、没有真正满足证据门；真实发布必须让证据门自行通过（会把 gate_overridden 归 false），不能带着强推标记出厂')
+}
+
 Enter-CheckGroup 'critical-contracts'
 if ($stateStatus -in @('VERIFIED', 'RELEASED')) {
     $criticalVerifiedFiles = @(
@@ -909,6 +1043,23 @@ if (Test-Path -LiteralPath $maintenancePath -PathType Leaf) {
     $allowedStrategies = @('SOURCE_AVAILABLE', 'RESOURCE_OVERLAY', 'BINARY_PATCH_RECORD', 'WRAPPER_LAUNCHER', 'REBUILD_REQUIRED', 'UNKNOWN')
     if (-not [string]::IsNullOrWhiteSpace($selectedStrategy) -and $allowedStrategies -notcontains $selectedStrategy) {
         $errors.Add('MAINTENANCE-MODE.yaml has an unknown selected_strategy')
+    }
+    # GAP-4 fidelity floor: a MODEL_ONLY / STUB / FIXTURE_ONLY core is a shell or a sample, never a
+    # real product, so it must never satisfy real VERIFIED/RELEASED -- Codex counter-example C, an
+    # empty model claiming to be a finished client. A wrapper that replays the original core is a
+    # legitimate candidate (REPLAYED) and is intentionally NOT blocked here.
+    $coreFidelity = Get-YamlScalar -Text $maintenanceText -Key 'core_fidelity'
+    $allowedFidelity = @('OBSERVED', 'REPLAYED', 'RECONSTRUCTED', 'FIXTURE_ONLY', 'MODEL_ONLY', 'STUB', 'UNKNOWN')
+    if (-not [string]::IsNullOrWhiteSpace($coreFidelity) -and $allowedFidelity -notcontains $coreFidelity) {
+        $errors.Add('MAINTENANCE-MODE.yaml has an unknown core_fidelity')
+    }
+    if ($stateStatus -in @('VERIFIED', 'RELEASED')) {
+        if (@('MODEL_ONLY', 'STUB', 'FIXTURE_ONLY') -contains $coreFidelity) {
+            $errors.Add("real verified product cannot rest on a $coreFidelity core: MODEL_ONLY/STUB/FIXTURE_ONLY 是空壳或样例，不是真实成品")
+        }
+        elseif ([string]::IsNullOrWhiteSpace($coreFidelity) -or $coreFidelity -eq 'UNKNOWN') {
+            $errors.Add('real verified product has not declared core_fidelity in MAINTENANCE-MODE.yaml (需为 OBSERVED/REPLAYED/RECONSTRUCTED 之一)')
+        }
     }
 }
 
@@ -959,6 +1110,11 @@ foreach ($validationError in $errors) { Write-Output "ERROR: $validationError" }
 # The single deterministic answer to "what do I do next". Without it, every agent re-derives the
 # order from prose and two agents derive two different orders; that is exactly how a product ends
 # up half-migrated. These lines are emitted in every state, including a failing one.
+if ($null -ne $lifecycleReadiness) {
+    # The scoreboard: the single honest distance-to-goal number, emitted in every state (known or in
+    # repair). Computed from evidence, so an agent cannot self-award it; a narrow rung reads low.
+    Write-Output "CURRENT-USER-TESTABILITY: $(Get-UserTestability -StateRoot $stateRoot -Status $stateStatus)"
+}
 if ($null -ne $lifecycleReadiness -and $lifecycleReadiness.Known) {
     Write-Output "STATE: $($lifecycleReadiness.Status) - $($lifecycleReadiness.Meaning)"
     if (-not [string]::IsNullOrWhiteSpace($lifecycleReadiness.NextStatus)) {
@@ -978,6 +1134,18 @@ if ($null -ne $lifecycleReadiness -and $lifecycleReadiness.Known) {
     if ($lifecycleReadiness.ReadyToAdvance) {
         Write-Output "READY-TO-ADVANCE: $($lifecycleReadiness.NextStatus) 需要的证据已经齐了——现在就用 update-product-state.ps1 推进到 $($lifecycleReadiness.NextStatus) 落一个检查点（可以收工、可以换人接手），不要停在本阶段继续加工。"
     }
+}
+elseif ($null -ne $lifecycleReadiness -and -not $lifecycleReadiness.Known) {
+    # A status the lifecycle table does not know means STATE.yaml was hand-edited or a skipped step
+    # left it polluted. The Known branch above then emits no NEXT at all, so an agent re-improvises
+    # the order from prose -- the ISSUE-096 relapse where an unrecognized status left the entry with
+    # no next step. Fail loud and machine-readable instead: name the one repair action and the legal
+    # values, read from the table so this list can never drift from the source of truth.
+    $legalStatuses = @((Get-LifecycleTable).states | ForEach-Object { [string]$_.status })
+    Write-Output ("STATE_REPAIR_REQUIRED: STATE.yaml 的 status=" + $lifecycleReadiness.Status + " 不在生命周期表里，先修状态再谈下一步")
+    Write-Output "NEXT-STATUS: STATE_REPAIR"
+    Write-Output "NEXT-ACTION: 用 update-product-state.ps1 把 status 改回下列合法值之一，再重新运行本检查（不要手改 STATE.yaml）"
+    Write-Output ("BLOCKING-FACTS: status=" + $lifecycleReadiness.Status + "; 合法值=" + ($legalStatuses -join ', '))
 }
 Write-CoverageSummary
 if ($errors.Count -gt 0) {

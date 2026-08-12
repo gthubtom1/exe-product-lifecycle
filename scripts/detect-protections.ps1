@@ -27,7 +27,11 @@ param(
 
     [string]$TargetPath,
 
-    [switch]$Force
+    [switch]$Force,
+
+    # RV-R4 M1: refuse to execute a discovered analysis tool whose Authenticode signature is not Valid.
+    # Off by default because legitimate tools (some diec builds) are unsigned; on, it hardens the box.
+    [switch]$RequireSignedTools
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +42,32 @@ $ErrorActionPreference = 'Stop'
 trap {
     Write-UserFacingFailure -Message $_.Exception.Message -ScriptName 'detect-protections.ps1' -ErrorRecord $_
     exit 1
+}
+
+function Approve-DiscoveredTool {
+    # RV-R4 M1: DIE/strings are discovered by scanning the disk and then EXECUTED. Nothing verified the
+    # binary first, so a malicious diec.exe/strings.exe planted in a scanned directory would run with
+    # the user's rights. Record every tool's path + sha256 + Authenticode status (so a swapped tool is
+    # visible in the evidence), and under -RequireSignedTools refuse to run one whose signature is not
+    # Valid. A determined attacker can still plant an unsigned tool; requiring a signature by default
+    # would break legitimate unsigned tools, so the hard gate is opt-in and the record is always kept.
+    param(
+        [AllowEmptyString()][string]$ToolPath,
+        [Parameter(Mandatory = $true)][string]$Purpose,
+        [bool]$RequireSigned,
+        [Parameter(Mandatory = $true)]$Notes
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ToolPath) -or -not (Test-Path -LiteralPath $ToolPath -PathType Leaf)) { return '' }
+    $toolHash = (Get-FileHash -LiteralPath $ToolPath -Algorithm SHA256).Hash
+    $sigStatus = 'unknown'
+    try { $sigStatus = [string](Get-AuthenticodeSignature -LiteralPath $ToolPath).Status } catch { $sigStatus = 'unknown' }
+    [void]$Notes.Add("将执行分析工具 ${Purpose}: $ToolPath（签名状态 $sigStatus, sha256 $toolHash）")
+    if ($RequireSigned -and $sigStatus -ne 'Valid') {
+        [void]$Notes.Add("已按 -RequireSignedTools 跳过未通过签名校验的工具（签名状态 $sigStatus）: $ToolPath")
+        return ''
+    }
+    return $ToolPath
 }
 
 $root = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $ProductRoot).Path
@@ -103,6 +133,10 @@ if ([string]::IsNullOrWhiteSpace($diePath)) {
 $stringsPath = Get-InventoryToolPath -PreferLeaf @('strings.exe', 'strings64.exe')
 
 $notes = New-Object System.Collections.Generic.List[string]
+
+# RV-R4 M1: verify + record each discovered tool before it is executed below.
+$diePath = Approve-DiscoveredTool -ToolPath $diePath -Purpose 'DIE(加壳/编译器识别)' -RequireSigned:$RequireSignedTools -Notes $notes
+$stringsPath = Approve-DiscoveredTool -ToolPath $stringsPath -Purpose 'strings(字符串扫描)' -RequireSigned:$RequireSignedTools -Notes $notes
 
 # --- packer / compiler via DIE --------------------------------------------------------------
 $packer = 'unknown'

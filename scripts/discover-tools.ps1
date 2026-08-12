@@ -387,9 +387,16 @@ $normalizedSearchRoots = @(@($AdditionalSearchRoot) |
 # sync-local-skill.ps1 deletes anything in the install directory that is not in the source, so a
 # list kept inside the skill would be erased by the next update.
 $defaultExtraRootFiles = New-Object System.Collections.Generic.List[string]
-$codexHome = $env:CODEX_HOME
-if ([string]::IsNullOrWhiteSpace($codexHome)) { $codexHome = Join-Path $HOME '.codex' }
-[void]$defaultExtraRootFiles.Add((Join-Path $codexHome 'exe-lifecycle-tool-roots.txt'))
+# Machine-level cross-product tool-root list. Host-neutral by default so ANY agent host
+# (Cursor / Claude / Codex / generic) keeps its memory in one place instead of homing it in
+# ~/.codex. Legacy Codex-homed locations are still read when present so existing lists are not
+# orphaned; all candidates are filtered by Test-Path below, so absent ones are simply ignored.
+$machineToolRootFile = Join-Path (Join-Path $HOME '.exe-product-lifecycle') 'tool-roots.txt'
+[void]$defaultExtraRootFiles.Add($machineToolRootFile)
+if (-not [string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
+    [void]$defaultExtraRootFiles.Add((Join-Path $env:CODEX_HOME 'exe-lifecycle-tool-roots.txt'))
+}
+[void]$defaultExtraRootFiles.Add((Join-Path (Join-Path $HOME '.codex') 'exe-lifecycle-tool-roots.txt'))
 [void]$defaultExtraRootFiles.Add((Join-Path $toolingRoot 'EXTRA-TOOL-ROOTS.txt'))
 $resolvedExtraRootFiles = @(@(@($ExtraRootFile) + @($defaultExtraRootFiles)) |
     Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
@@ -663,7 +670,7 @@ $markdown = @(
     "- 产品目录: $root",
     '- 规则: 只记录发现结果，不自动安装、不执行目标 EXE。',
     '- 某个角色显示 no 时：先加 `-DeepScan` 整盘重扫一次，仍然找不到才算这台机器没装。',
-    "- 长期新增位置：把目录逐行写进 $((Join-Path $codexHome 'exe-lifecycle-tool-roots.txt')) 或产品目录下的 product-state/tooling/EXTRA-TOOL-ROOTS.txt，以后每次发现都会带上。",
+    "- 长期新增位置：把目录逐行写进 $machineToolRootFile 或产品目录下的 product-state/tooling/EXTRA-TOOL-ROOTS.txt，以后每次发现都会带上。",
     '',
     '| 工具角色 | 分类 | 可用 | 路径 | 版本/描述 | 来源 |',
     '|---|---|---:|---|---|---|'

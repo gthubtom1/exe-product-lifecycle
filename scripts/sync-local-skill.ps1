@@ -42,6 +42,17 @@ if (Test-Path -LiteralPath (Join-Path $destination '.git') -PathType Container) 
     exit 1
 }
 
+# RV-R4 L2: this script deletes destination files the source does not have. If -DestinationRoot is
+# mis-pointed at an ordinary non-empty directory that is not a skill install, that delete would eat
+# unrelated files. A non-empty destination must therefore look like a skill install (contain SKILL.md);
+# an empty/new destination is fine (a fresh install). A clone was already refused above.
+$destinationEntries = @(Get-ChildItem -LiteralPath $destination -Force -ErrorAction SilentlyContinue)
+if ($destinationEntries.Count -gt 0 -and -not (Test-Path -LiteralPath (Join-Path $destination 'SKILL.md') -PathType Leaf)) {
+    Write-Output "错误: 目标目录非空且不含 SKILL.md，看起来不是一个技能安装目录，已拒绝同步（避免误删无关文件）: $destination"
+    Write-Output '怎么办: 确认 -DestinationRoot 指向的是本技能的安装目录；要装到全新位置就指向一个空目录。'
+    exit 1
+}
+
 $layoutGate = Join-Path $source 'scripts\validate-skill-layout.ps1'
 if (-not (Test-Path -LiteralPath $layoutGate -PathType Leaf)) {
     Write-Output "错误: 找不到技能自检脚本，已拒绝同步: $layoutGate"

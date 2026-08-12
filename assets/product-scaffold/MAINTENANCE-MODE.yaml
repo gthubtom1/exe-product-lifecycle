@@ -2,6 +2,17 @@ schema_version: 1
 product_id: "__PRODUCT_ID__"
 status: "PENDING"
 selected_strategy: "UNKNOWN"
+# 复刻核心的保真/来源级别：真实成品必须是 OBSERVED / REPLAYED / RECONSTRUCTED 之一；
+# MODEL_ONLY / STUB / FIXTURE_ONLY 是空壳或样例，绝不能声称真实 VERIFIED。
+core_fidelity: "UNKNOWN"
+allowed_core_fidelity:
+  - "OBSERVED"
+  - "REPLAYED"
+  - "RECONSTRUCTED"
+  - "FIXTURE_ONLY"
+  - "MODEL_ONLY"
+  - "STUB"
+  - "UNKNOWN"
 # A product can use different strategies for different components. Do not
 # claim that an EXE-only input is fully rebuildable without evidence.
 allowed_strategies:

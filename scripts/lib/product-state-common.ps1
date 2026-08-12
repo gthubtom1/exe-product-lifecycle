@@ -474,6 +474,33 @@ function Get-LifecycleReadiness {
     }
 }
 
+function Get-UserTestability {
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Status
+    )
+
+    # One honest distance-to-goal number, computed from evidence on disk and never self-declared, so a
+    # status that merely looks close (BUILD_READY) still reads 'slice-defined', not 'user-testable': a
+    # narrow rung can never masquerade as the wide goal of "user can install, authorize, operate,
+    # observe and cancel/rollback a rebuild that matches the original".
+    $unsettled = @('PENDING', 'UNVERIFIED', 'UNKNOWN', 'DISCOVERY_PENDING', 'TBD')
+    $settled = {
+        param($value)
+        $trimmed = ([string]$value).Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmed)) { return $false }
+        return ($unsettled -notcontains $trimmed)
+    }
+    if ($Status -eq 'RELEASED') { return 'verified' }
+    $fidelity = (Get-YamlScalar -Text (Read-TextFileSafe -Path (Join-Path $StateRoot 'MAINTENANCE-MODE.yaml')) -Key 'core_fidelity').Trim()
+    if ($Status -eq 'VERIFIED' -and (@('OBSERVED', 'REPLAYED', 'RECONSTRUCTED') -contains $fidelity)) { return 'user-testable' }
+    if ($Status -eq 'VERIFIED_SIMULATION') { return 'slice-built' }
+    $route = Get-YamlScalar -Text (Read-TextFileSafe -Path (Join-Path $StateRoot 'analysis\ROUTE-DECISION.yaml')) -Key 'chosen_route'
+    $slice = Get-YamlScalar -Text (Read-TextFileSafe -Path (Join-Path $StateRoot 'analysis\USER-TESTABLE-SLICE.yaml')) -Key 'slice_status'
+    if ((& $settled $route) -and (& $settled $slice)) { return 'slice-defined' }
+    return 'none'
+}
+
 function New-UserFacingError {
     param(
         [Parameter(Mandatory = $true)][string]$Message,

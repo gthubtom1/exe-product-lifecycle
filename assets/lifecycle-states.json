@@ -76,6 +76,8 @@
       "next_status": "VERIFIED",
       "next_action": "构建候选包，按测试矩阵逐条验证，并留下可运行的回滚路径",
       "requires": [
+        { "kind": "yaml_settled", "path": "analysis/ROUTE-DECISION.yaml", "key": "chosen_route", "why": "分析后还没有选定最快复刻路线（源码/资源覆盖/二进制补丁/外壳/重建）——没有路线决策就进入构建或打包，正是漂移的起点" },
+        { "kind": "yaml_settled", "path": "analysis/USER-TESTABLE-SLICE.yaml", "key": "slice_status", "why": "还没有定义最小用户可测试切片（GUI→授权→真实操作→观察→取消/回滚）——没有它就构建，等于不知道让用户测什么" },
         { "kind": "yaml_settled", "path": "OPERATION-MANIFEST.yaml", "key": "status", "why": "运营模块选择还停在待定" },
         { "kind": "yaml_settled", "path": "EVIDENCE-LEDGER.yaml", "key": "status", "why": "证据台账还停在待定" },
         { "kind": "yaml_settled", "path": "NETWORK-DATA-POLICY.yaml", "key": "status", "why": "网络和数据边界还停在待定" },
@@ -95,7 +97,7 @@
     },
     {
       "status": "VERIFIED",
-      "order": 7,
+      "order": 8,
       "meaning": "候选版本已经过真实验证，可以准备发布",
       "next_status": "RELEASED",
       "next_action": "生成发布请求，等平台返回登记记录后才算已发布",
@@ -103,7 +105,7 @@
     },
     {
       "status": "RELEASED",
-      "order": 8,
+      "order": 9,
       "meaning": "平台已经登记并放行了这个版本",
       "next_status": "",
       "next_action": "等待下一个上游新版本，或按用户要求回滚",

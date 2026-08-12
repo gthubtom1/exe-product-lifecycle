@@ -67,6 +67,17 @@ function Set-Status {
     [IO.File]::WriteAllText($indexPath, ([regex]::Replace($index, '(?m)^(- 当前状态:\s*`)[^`]*(`)', ('${1}' + $Status + '${2}'))), (New-Object Text.UTF8Encoding($true)))
 }
 
+function Set-ContractField {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+    $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path
+    $text = [regex]::Replace($text, ('(?m)^(\s*{0}:\s*")[^"]*(")' -f [regex]::Escape($Key)), ('${1}' + $Value + '${2}'))
+    [IO.File]::WriteAllText($Path, $text, (New-Object Text.UTF8Encoding($false)))
+}
+
 function Add-Result {
     param([string]$Name, [bool]$Passed, [string]$Expected, [string]$Actual)
 
@@ -227,6 +238,212 @@ $state = Get-Content -Raw -Encoding UTF8 -LiteralPath $statePath
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'G13-traversal-refused' -Text $run.Text -Pattern 'points outside the product directory'
 
+# SR -- a hand-edited or skip-polluted status the lifecycle table does not recognise used to yield
+# only a prose ERROR line and no NEXT at all, so an agent re-improvised the order (the ISSUE-096
+# relapse). The validator must now fail loud and MACHINE-READABLE: a STATE_REPAIR_REQUIRED line, a
+# next action, and the legal values. Delete the repair branch and all three assertions go red.
+$root = New-Fixture -Name 'sr-unknown-status'
+Set-Status -Root $root -Status 'TOTALLY_BOGUS_STATUS'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'SR1-repair-required-emitted' -Text $run.Text -Pattern '(?m)^STATE_REPAIR_REQUIRED: '
+Assert-Match -Name 'SR1-names-next-action' -Text $run.Text -Pattern '(?m)^NEXT-ACTION: '
+Assert-Match -Name 'SR1-lists-legal-values' -Text $run.Text -Pattern '(?m)^BLOCKING-FACTS: .*BASELINE_CREATED'
+
+# SR2 -- the mandatory entry point must self-heal a polluted status the same way the validator does.
+# start-here used to derive every step from the status, so an unrecognised one produced empty
+# "继续..." steps and no NEXT -- the same ISSUE-096 relapse, at the one place an agent looks first.
+$root = New-Fixture -Name 'sr2-entry-unknown-status'
+Set-Status -Root $root -Status 'TOTALLY_BOGUS_STATUS'
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'SR2-entry-repair-required' -Text $run.Text -Pattern '(?m)^STATE_REPAIR_REQUIRED: '
+Assert-Match -Name 'SR2-entry-names-next-action' -Text $run.Text -Pattern '(?m)^NEXT-ACTION: '
+
+# SR3 -- the validator's recognised-status set is derived from the lifecycle table, not a second
+# hardcoded copy that drifts from it (ISSUE-096's root: the table gained a state the copy lacked).
+# A branch status that lives only in the table -- the kind a hardcoded copy forgets -- must be
+# recognised: STATE present, and NOT flagged "no recognized status".
+$root = New-Fixture -Name 'sr3-table-status-recognised'
+Set-Status -Root $root -Status 'MIGRATION_REQUIRED'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'SR3-status-recognised-anchor' -Text $run.Text -Pattern '(?m)^STATE: MIGRATION_REQUIRED'
+Assert-Match -Name 'SR3-not-rejected-as-unknown' -Text $run.Text -Pattern 'has no recognized status' -Absent
+
+# SR4 -- the writer validates -Status against the same table (not a [ValidateSet] second copy that
+# drifts), refuses an unknown one in the user's language, writes nothing, and shows no stack trace.
+$root = New-Fixture -Name 'sr4-writer-unknown-status'
+$before = (Get-FileHash -LiteralPath (Join-Path $root 'product-state\STATE.yaml') -Algorithm SHA256).Hash
+$run = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'TOTALLY_BOGUS_STATUS')
+$after = (Get-FileHash -LiteralPath (Join-Path $root 'product-state\STATE.yaml') -Algorithm SHA256).Hash
+Assert-Match -Name 'SR4-writer-rejects-unknown' -Text $run.Text -Pattern '不认识的状态'
+Add-Result -Name 'SR4-nothing-written' -Passed ($before -eq $after) -Expected 'unchanged' -Actual $(if ($before -eq $after) { 'unchanged' } else { 'modified' })
+Add-Result -Name 'SR4-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
+
+# PB1 -- Phase B route/slice gate: a product cannot claim BUILD_READY (ready to build/package) until
+# it has chosen a rebuild route AND defined a user-testable slice. This is the user's top anti-drift
+# rule -- "no route decision + no user-testable slice -> no packaging". A freshly-initialised product
+# has both scaffolds at their unsettled defaults, so forging BUILD_READY must name both as missing
+# evidence. Remove either requirement from lifecycle-states.json and the matching assertion goes red.
+$root = New-Fixture -Name 'pb1-route-slice-gate'
+Set-Status -Root $root -Status 'BUILD_READY'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'PB1-route-decision-gates-build' -Text $run.Text -Pattern 'ROUTE-DECISION\.yaml'
+Assert-Match -Name 'PB1-user-testable-slice-gates-build' -Text $run.Text -Pattern 'USER-TESTABLE-SLICE\.yaml'
+
+# PB2 -- GAP-4 fidelity floor: a MODEL_ONLY / STUB / FIXTURE_ONLY core is a shell or a sample, never a
+# real product, so it must never satisfy real VERIFIED (Codex counter-example C). A RECONSTRUCTED core
+# must NOT trip this specific gate -- the mutation guard against a gate stuck on always-fire.
+$root = New-Fixture -Name 'pb2-fidelity-floor'
+Set-Status -Root $root -Status 'VERIFIED'
+$maint = Join-Path $root 'product-state\MAINTENANCE-MODE.yaml'
+Set-ContractField -Path $maint -Key 'core_fidelity' -Value 'MODEL_ONLY'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'PB2-model-only-blocks-verified' -Text $run.Text -Pattern 'cannot rest on a MODEL_ONLY core'
+Set-ContractField -Path $maint -Key 'core_fidelity' -Value 'RECONSTRUCTED'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'PB2-reconstructed-not-blocked' -Text $run.Text -Pattern 'cannot rest on a' -Absent
+
+# PB3 -- the scoreboard: one honest distance number, computed from evidence, never self-declared. A
+# fresh product reads 'none'; a product that has settled its route AND its user-testable slice reads
+# 'slice-defined' -- NOT 'user-testable'. That gap is the whole point: a narrow rung must never read
+# as the wide goal. Remove the emit and the first assertion goes red; misclassify and the second does.
+$root = New-Fixture -Name 'pb3-scoreboard-none'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'PB3-fresh-is-none' -Text $run.Text -Pattern '(?m)^CURRENT-USER-TESTABILITY: none'
+$root = New-Fixture -Name 'pb3-scoreboard-slice-defined'
+Set-ContractField -Path (Join-Path $root 'product-state\analysis\ROUTE-DECISION.yaml') -Key 'chosen_route' -Value 'WRAPPER_LAUNCHER'
+Set-ContractField -Path (Join-Path $root 'product-state\analysis\USER-TESTABLE-SLICE.yaml') -Key 'slice_status' -Value 'DEFINED'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'PB3-route-slice-is-slice-defined' -Text $run.Text -Pattern '(?m)^CURRENT-USER-TESTABILITY: slice-defined'
+
+# VT -- the through-line evidence gate (second half of RV-A#1). Nothing used to read
+# VERIFICATION-RECORD.md, so a real VERIFIED could stand on the all-PENDING scaffold. Forging VERIFIED
+# must be caught while the record is still scaffold; flipping the 关键验收 result column to PASS clears
+# the row check but NOT while overall_result is still PENDING (the two are independent); settling both
+# clears the gate -- the mutation guard proving it is not stuck always-firing. Delete either check in
+# validate-product-state.ps1 and the matching assertion goes red.
+$root = New-Fixture -Name 'vt-throughline-gate'
+Set-Status -Root $root -Status 'VERIFIED'
+$rec = Join-Path $root 'product-state\reports\VERIFICATION-RECORD.md'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'VT1-scaffold-rows-caught' -Text $run.Text -Pattern '关键验收 仍有未通过的行'
+[IO.File]::WriteAllText($rec, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $rec) -replace '`PENDING` \|', '`PASS` |'), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'VT2-rows-pass-clears-row-check' -Text $run.Text -Pattern '关键验收 仍有未通过的行' -Absent
+Assert-Match -Name 'VT2-overall-still-caught' -Text $run.Text -Pattern 'overall_result 不是 PASS'
+[IO.File]::WriteAllText($rec, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $rec) -replace 'overall_result`: `PENDING`', 'overall_result`: `PASS`'), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'VT3-throughline-cleared' -Text $run.Text -Pattern 'VERIFICATION-RECORD\.md' -Absent
+
+# RB -- runnable rollback gate (RV-C-G3). requiredFiles only proved the runbook file exists; its content
+# was never read, so a real VERIFIED could ship the <ROLLBACK_COMMAND> template with an UNVERIFIED
+# target. Forging VERIFIED must be caught for BOTH the command placeholder AND the missing 64-hex
+# package hash; filling a real command plus a real hash clears exactly this gate (mutation guard).
+$root = New-Fixture -Name 'rb-rollback-runbook'
+Set-Status -Root $root -Status 'VERIFIED'
+$rb = Join-Path $root 'product-state\rollback\ROLLBACK-RUNBOOK.md'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RB1-command-placeholder-caught' -Text $run.Text -Pattern '还留着命令占位符'
+Assert-Match -Name 'RB2-missing-package-hash-caught' -Text $run.Text -Pattern '没有登记回滚目标包的 SHA-256'
+$rbText = Get-Content -Raw -Encoding UTF8 -LiteralPath $rb
+$rbText = $rbText -replace '<[A-Za-z0-9_]+>', 'Copy-Item -Force product-state\artifacts\rollback\prev-release.bin app.exe'
+$rbText = $rbText -replace 'UNVERIFIED', ('a' * 64)
+[IO.File]::WriteAllText($rb, $rbText, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+# RV-R2 bypass #4: placeholders gone and a 64-hex present, but no real package hashes to it -> theater.
+Assert-Match -Name 'RB3-hash-without-package-caught' -Text $run.Text -Pattern '没有对应任何已保存的回滚包'
+$rbPkgDir = Join-Path $root 'product-state\artifacts\rollback'
+New-Item -ItemType Directory -Force -Path $rbPkgDir | Out-Null
+[IO.File]::WriteAllText((Join-Path $rbPkgDir 'prev-release.bin'), 'previous verified release bytes', (New-Object Text.UTF8Encoding($false)))
+$rbHash = (Get-FileHash -LiteralPath (Join-Path $rbPkgDir 'prev-release.bin') -Algorithm SHA256).Hash
+[IO.File]::WriteAllText($rb, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $rb) -replace ('a' * 64), $rbHash), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RB4-real-package-clears-binding' -Text $run.Text -Pattern '没有对应任何已保存的回滚包' -Absent
+Assert-Match -Name 'RB4-runbook-fully-clears' -Text $run.Text -Pattern 'ROLLBACK-RUNBOOK\.md' -Absent
+
+# EL -- evidence ledger is real, not decorative (RV-C-G4). A forged VERIFIED with entries: [] must be
+# caught; adding one static_present entry clears the empty check but NOT the runtime-level check;
+# a dynamic_success entry clears the gate. static_present ("文件在") is never "it actually ran".
+$root = New-Fixture -Name 'el-evidence-ledger'
+Set-Status -Root $root -Status 'VERIFIED'
+$ledger = Join-Path $root 'product-state\EVIDENCE-LEDGER.yaml'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'EL1-empty-entries-caught' -Text $run.Text -Pattern 'entries 为空'
+[IO.File]::WriteAllText($ledger, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $ledger) -replace 'entries: \[\]', "entries:`n  - id: e1`n    evidence_level: static_present"), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'EL2-empty-cleared' -Text $run.Text -Pattern 'entries 为空' -Absent
+Assert-Match -Name 'EL2-static-only-caught' -Text $run.Text -Pattern '没有任何运行期证据'
+[IO.File]::WriteAllText($ledger, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $ledger) -replace 'static_present', 'dynamic_success'), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'EL3-runtime-evidence-clears' -Text $run.Text -Pattern '没有任何运行期证据' -Absent
+
+# EB -- fabricate-from-nothing defense (RV-R2). The adversarial review pushed a fake product to a green
+# VERIFIED using text-only evidence. A runtime ledger entry must now bind to a REAL hash-consistent
+# artifact file, not just a typed level: forging VERIFIED with a text-only dynamic_success entry must
+# fail; adding a real artifact whose sha256 matches clears exactly this binding (mutation guard).
+$root = New-Fixture -Name 'eb-evidence-binding'
+Set-Status -Root $root -Status 'VERIFIED'
+$ledger = Join-Path $root 'product-state\EVIDENCE-LEDGER.yaml'
+[IO.File]::WriteAllText($ledger, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $ledger) -replace 'entries: \[\]', "entries:`n  - id: e1`n    evidence_level: dynamic_success"), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'EB1-text-only-evidence-fabrication-caught' -Text $run.Text -Pattern '没有绑定真实产物'
+$evidenceDir = Join-Path $root 'product-state\artifacts\verification'
+New-Item -ItemType Directory -Force -Path $evidenceDir | Out-Null
+[IO.File]::WriteAllText((Join-Path $evidenceDir 'run-log.txt'), 'real run receipt: exit 0', (New-Object Text.UTF8Encoding($false)))
+$evidenceHash = (Get-FileHash -LiteralPath (Join-Path $evidenceDir 'run-log.txt') -Algorithm SHA256).Hash
+$ledgerBody = "entries:`n  - id: e1`n    evidence_level: dynamic_success`n    path: `"product-state/artifacts/verification/run-log.txt`"`n    sha256: `"$evidenceHash`""
+[IO.File]::WriteAllText($ledger, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $ledger) -replace '(?s)entries:.*?(?=\r?\nrules:)', $ledgerBody), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'EB2-real-artifact-clears-binding' -Text $run.Text -Pattern '没有绑定真实产物' -Absent
+
+# GO -- override is not verification (RV-R2 hole B). A -Force transition must leave gate_overridden:
+# true ON DISK (not only in the JSON), and a real VERIFIED/RELEASED carrying that mark must be refused
+# -- a forced state cannot ship as genuinely verified. Clearing the mark clears the error.
+$root = New-Fixture -Name 'go-force-recorded'
+$null = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'ANALYZED', '-Force')
+$goState = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $root 'product-state\STATE.yaml')
+Assert-Match -Name 'GO1-force-recorded-on-disk' -Text $goState -Pattern '(?im)^gate_overridden:\s*"?true"?'
+$root = New-Fixture -Name 'go-forced-verified'
+Set-Status -Root $root -Status 'VERIFIED'
+$goPath = Join-Path $root 'product-state\STATE.yaml'
+[IO.File]::WriteAllText($goPath, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $goPath) -replace '(?im)^gate_overridden:.*$', 'gate_overridden: "true"'), (New-Object Text.UTF8Encoding($true)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'GO2-forced-verified-flagged' -Text $run.Text -Pattern '强推'
+[IO.File]::WriteAllText($goPath, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $goPath) -replace '(?im)^gate_overridden:.*$', 'gate_overridden: "false"'), (New-Object Text.UTF8Encoding($true)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'GO3-cleared-override-not-flagged' -Text $run.Text -Pattern '强推' -Absent
+
+# WL -- win-hardening lint (RV-D-D1): assigning to a reserved automatic variable ($pid/$args/...)
+# silently shadows it and has repeatedly broken scripts on plain Windows; validate-skill-layout
+# parsed scripts but never flagged this. A fixture script that assigns $pid must be caught; renaming
+# it to $processId clears -- the mutation guard against a lint that fires on any variable at all.
+$wlRoot = Join-Path $FixtureRoot 'wl-reserved-var'
+New-Item -ItemType Directory -Force -Path (Join-Path $wlRoot 'scripts') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $wlRoot 'knowledge') | Out-Null
+[IO.File]::WriteAllText((Join-Path $wlRoot 'scripts\validate-knowledge.ps1'), "exit 0`n", (New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText((Join-Path $wlRoot 'scripts\demo.ps1'), "`$pid = 123`n", (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-skill-layout.ps1' -ScriptArgs @('-SkillRoot', $wlRoot)
+Assert-Match -Name 'WL1-reserved-var-assignment-caught' -Text $run.Text -Pattern 'reserved automatic variable'
+[IO.File]::WriteAllText((Join-Path $wlRoot 'scripts\demo.ps1'), "`$processId = 123`n", (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-skill-layout.ps1' -ScriptArgs @('-SkillRoot', $wlRoot)
+Assert-Match -Name 'WL2-normal-var-not-flagged' -Text $run.Text -Pattern 'reserved automatic variable' -Absent
+
+# LP -- portable frontmatter + host-neutral layout (R1-G1/G5/G6). The layout gate must validate the
+# open-standard SKILL.md frontmatter (name + description, extra fields like compatibility allowed)
+# rather than demand the Codex-only agents/openai.yaml, so any agent installing from a URL passes. A
+# SKILL.md with an extra compatibility field must not trip the frontmatter check; a missing
+# agents/openai.yaml must not be a required-file error; an empty description must be caught.
+$lpRoot = Join-Path $FixtureRoot 'lp-portable-layout'
+New-Item -ItemType Directory -Force -Path (Join-Path $lpRoot 'scripts') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $lpRoot 'knowledge') | Out-Null
+[IO.File]::WriteAllText((Join-Path $lpRoot 'scripts\validate-knowledge.ps1'), "exit 0`n", (New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText((Join-Path $lpRoot 'SKILL.md'), "---`nname: exe-product-lifecycle`ndescription: `"does a thing`"`ncompatibility: `"Windows; PowerShell 5.1 or 7`"`n---`n`n# x`n", (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-skill-layout.ps1' -ScriptArgs @('-SkillRoot', $lpRoot)
+Assert-Match -Name 'LP1-extra-frontmatter-field-ok' -Text $run.Text -Pattern 'frontmatter' -Absent
+Assert-Match -Name 'LP2-openai-yaml-not-required' -Text $run.Text -Pattern 'openai\.yaml' -Absent
+[IO.File]::WriteAllText((Join-Path $lpRoot 'SKILL.md'), "---`nname: exe-product-lifecycle`ndescription:`n---`n`n# x`n", (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-skill-layout.ps1' -ScriptArgs @('-SkillRoot', $lpRoot)
+Assert-Match -Name 'LP3-empty-description-caught' -Text $run.Text -Pattern 'description is empty'
+
 # S1..S4 -- the mandatory entry point. It is the mechanism that keeps an agent on the rails, so it
 # needs the same coverage as the gates it dispatches to: pick the right mode, put input
 # registration before everything else, and never write to the product while doing it.
@@ -236,6 +453,8 @@ New-Item -ItemType Directory -Force -Path $root | Out-Null
 $run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'S1-bootstrap-detected' -Text $run.Text -Pattern '(?m)^模式: bootstrap'
 Assert-Match -Name 'S1-names-init-command' -Text $run.Text -Pattern 'init-product\.ps1'
+# R3-D1: the Windows-only guard must not false-fire on the (Windows) host running the suite.
+Assert-Match -Name 'S1-windows-guard-no-false-fire' -Text $run.Text -Pattern '只能在 Windows 上运行' -Absent
 
 $null = Invoke-Script -Name 'init-product.ps1' -ScriptArgs @('-ProductRoot', $root, '-ProductId', 'entry-product', '-CorePath', (Join-Path $root 'MyApp.exe'))
 $beforeState = @(Get-ChildItem -LiteralPath (Join-Path $root 'product-state') -Recurse -File | Sort-Object FullName |
@@ -286,22 +505,26 @@ Add-Result -Name 'P2-verdict-is-legal' -Passed $verdictOk -Expected 'legal-verdi
 $run = Invoke-Script -Name 'detect-protections.ps1' -ScriptArgs @('-ProductRoot', $p2)
 Assert-Match -Name 'P3-reassess-refused-without-force' -Text $run.Text -Pattern '已经探测过'
 
+# MT -- tool integrity (RV-R4 M1): detect-protections discovers analysis tools by scanning disk and
+# then executes them. It now records each tool's path+sha256+signature into PROTECTION-PROFILE.yaml
+# before running it, and -RequireSignedTools refuses one whose signature is not Valid. Point the
+# inventory at an unsigned dummy: strict mode must RECORD it and then SKIP it (never execute it).
+$mtRoot = New-Fixture -Name 'mt-tool-integrity'
+$mtTool = Join-Path $mtRoot 'diec.exe'
+[IO.File]::WriteAllBytes($mtTool, [byte[]](0x4D, 0x5A, 0x90, 0x00, 0x03))
+$mtInv = Join-Path $mtRoot 'product-state\tooling\TOOL-INVENTORY.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $mtInv) | Out-Null
+[IO.File]::WriteAllText($mtInv, ('{"tools":[{"path":' + (ConvertTo-Json $mtTool) + ',"leaf":"diec.exe"}]}'), (New-Object Text.UTF8Encoding($false)))
+$null = Invoke-Script -Name 'detect-protections.ps1' -ScriptArgs @('-ProductRoot', $mtRoot, '-RequireSignedTools', '-Force')
+$mtProfile = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $mtRoot 'product-state\PROTECTION-PROFILE.yaml')
+Assert-Match -Name 'MT1-tool-recorded-before-exec' -Text $mtProfile -Pattern '将执行分析工具'
+Assert-Match -Name 'MT2-unsigned-tool-skipped-in-strict' -Text $mtProfile -Pattern '跳过未通过签名校验'
+
 # BS -- the binding-strength gate on AUTH_CONTRACT_READY. "The launcher is bound to the core" is
 # exactly where "claimed strong, proved nothing" hides, so the gate honours a claimed tier only
 # when the evidence THAT tier needs is settled. The ladder is cumulative, so this fixture keeps
 # failing on the rungs below it; every assertion looks only at whether binding_strength_backed is
 # the requirement firing, which is the single thing this gate controls.
-function Set-ContractField {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Key,
-        [Parameter(Mandatory = $true)][string]$Value
-    )
-    $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path
-    $text = [regex]::Replace($text, ('(?m)^(\s*{0}:\s*")[^"]*(")' -f [regex]::Escape($Key)), ('${1}' + $Value + '${2}'))
-    [IO.File]::WriteAllText($Path, $text, (New-Object Text.UTF8Encoding($false)))
-}
-
 $root = New-Fixture -Name 'bs-binding-strength'
 Set-Status -Root $root -Status 'AUTH_CONTRACT_READY'
 $contract = Join-Path $root 'product-state\auth\LAUNCH-CONTRACT.yaml'
@@ -361,6 +584,21 @@ $run = Invoke-Script -Name 'publish-knowledge.ps1' -ScriptArgs @('-SkillRoot', $
 Assert-Match -Name 'PK2-non-repo-names-clone' -Text $run.Text -Pattern 'git clone'
 Add-Result -Name 'PK2-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
 
+# MB -- mock authorization server L1 (RV-R4): an unauthenticated mock must refuse a non-loopback bind
+# unless explicitly opted in, and must refuse BEFORE opening any socket (so this assertion never hangs).
+$run = Invoke-Script -Name 'mock-authorization-server.ps1' -ScriptArgs @('-BindAddress', '0.0.0.0')
+Assert-Match -Name 'MB1-nonloopback-bind-refused' -Text $run.Text -Pattern '不是回环地址'
+
+# SG -- sync target guard L2 (RV-R4): sync deletes destination files the source lacks, so pointing it
+# at an ordinary non-empty directory that is not a skill install must be refused before any copy/delete
+# -- otherwise it eats unrelated files. The stray file must survive the refused sync.
+$sgDest = Join-Path $FixtureRoot 'sg-not-a-skill'
+New-Item -ItemType Directory -Force -Path $sgDest | Out-Null
+[IO.File]::WriteAllText((Join-Path $sgDest 'important.txt'), 'unrelated user file', (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'sync-local-skill.ps1' -ScriptArgs @('-SourceRoot', $script:Skill, '-DestinationRoot', $sgDest)
+Assert-Match -Name 'SG1-non-skill-dest-refused' -Text $run.Text -Pattern '看起来不是一个技能安装目录'
+Add-Result -Name 'SG1-unrelated-file-survived' -Passed (Test-Path -LiteralPath (Join-Path $sgDest 'important.txt')) -Expected 'kept' -Actual $(if (Test-Path -LiteralPath (Join-Path $sgDest 'important.txt')) { 'kept' } else { 'deleted' })
+
 # RA -- "每阶段必须能收工". A long task drags when an agent keeps working a stage it has already
 # finished instead of landing a checkpoint. The moment a stage's exit is earned, the tooling must
 # say so; and it must stay silent on a stage that is not finished, or the affordance becomes a nag.
@@ -400,6 +638,15 @@ while ($byStatus.ContainsKey($cursor) -and -not $walked.Contains($cursor)) {
     if ([string]::IsNullOrWhiteSpace($cursor)) { break }
 }
 Add-Result -Name 'L1-main-path-reaches-released' -Passed $reachedReleased -Expected 'INIT..RELEASED' -Actual $(if ($reachedReleased) { 'INIT..RELEASED' } else { "stops at $cursor" })
+
+# L2 -- ladder orders must be unique. The readiness ladder is cumulative over `order <= current`,
+# so two states sharing an order silently inherit each other's requires. VERIFIED_SIMULATION and
+# VERIFIED both sat on order 7, which meant any real-evidence gate added to VERIFIED would also
+# have blocked the simulation stopover (and vice versa) -- simulation and real are different axes,
+# not the same rung. Give any two ladder states the same order again and this goes red.
+$laddered = @($states | Where-Object { $null -ne $_.order })
+$duplicated = @($laddered | Group-Object { [int]$_.order } | Where-Object { $_.Count -gt 1 } | ForEach-Object { ('order {0}: {1}' -f $_.Name, (@($_.Group | ForEach-Object { [string]$_.status }) -join '+')) })
+Add-Result -Name 'L2-ladder-orders-are-unique' -Passed ($duplicated.Count -eq 0) -Expected 'all-distinct' -Actual $(if ($duplicated.Count -eq 0) { 'all-distinct' } else { $duplicated -join '; ' })
 
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''

@@ -1,6 +1,7 @@
 ---
 name: exe-product-lifecycle
-description: "Maintain and evolve a product-specific Windows EXE second-distribution workflow: intake an arbitrary EXE with optional Markdown/package notes, record and reapply branding/UI/contact/feature customizations, control entry through a Launcher, hand off authorization requirements to a separate licensing platform, preserve customizations across upstream versions, and turn sanitized multi-product evidence into reviewed reusable patterns. Use for EXE 二次发行、Launcher、自建授权衔接、品牌/UI/联系方式/功能定制、每产品独立档案、持续同步或可进化经验库; do not trigger for one-off binary inspection, debugging, unpacking, exploit work, security assessment, or generic source-based migration without this lifecycle contract."
+description: "Maintain and evolve a Windows-only EXE second-distribution product: intake an EXE (plus optional installer, DLLs, notes), record and reapply branding/UI/contact/feature customizations, gate entry through a Launcher, hand authorization to a separate licensing platform, and preserve customizations across upstream versions. 用于 EXE 二次发行、Launcher、自建授权衔接、品牌/UI/联系方式/功能定制、每产品独立档案与持续同步。Not for one-off binary inspection, unpacking, exploit work, or generic source-based migration."
+compatibility: "Windows; PowerShell 5.1 or 7; scripts do not run on macOS/Linux"
 ---
 
 # EXE Product Lifecycle
@@ -40,6 +41,8 @@ Use this skill when the business goal is a maintained second-distribution produc
 Use a generic software-migration skill when the task is ordinary source-based migration, installer maintenance, or release operation without the product-specific second-distribution/customization/Launcher/authorization-sync contract. If both descriptions match, this skill owns the product lifecycle and the other skill supplies only the needed analysis or build capability.
 
 ## ACTION REQUIRED（第一件事：让脚本告诉你顺序）
+
+> 平台要求：本 Skill 只能在 **Windows** 上运行（PowerShell 5.1 或 7）。它分析 Windows EXE，依赖注册表 / System32 / Windows 专用分析工具；在 macOS / Linux 上只能阅读，脚本无法执行——start-here.ps1 会在非 Windows 上直接给出这一提示。
 
 **STEP 0 是强制的。在读取任何产品文件、选择任何模式、回答用户任何问题之前，先运行：**
 

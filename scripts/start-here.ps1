@@ -27,6 +27,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Windows-only, said up front. On PowerShell 7 on macOS/Linux the very next line (dot-sourcing
+# lib\product-state-common.ps1) fails with an opaque "cannot find path", because the PE analysis,
+# registry lookups and System32 probes this skill relies on exist only on Windows. Fail fast with the
+# message the README already promises, so an arbitrary agent that reads the URL and runs this on the
+# wrong OS is told plainly instead of chasing a cryptic error. ($IsWindows exists only on PS6+; on 5.1
+# the host is Windows by definition, and -and short-circuits so the variable is never referenced there.)
+if (($PSVersionTable.PSVersion.Major -ge 6) -and -not $IsWindows) {
+    Write-Output '错误: 这个 Skill 只能在 Windows 上运行（PowerShell 5.1 或 7）。它分析 Windows EXE，依赖注册表、System32 和 Windows 专用分析工具，在 macOS/Linux 上无法运行脚本。'
+    exit 1
+}
+
 . (Join-Path $PSScriptRoot 'lib\product-state-common.ps1')
 
 trap {
@@ -137,7 +148,21 @@ if (-not $hasState) {
 $stateText = Read-TextFileSafe -Path (Join-Path $stateRoot 'STATE.yaml')
 $status = Get-YamlScalar -Text $stateText -Key 'status'
 $readiness = Get-LifecycleReadiness -StateRoot $stateRoot -Status $status
+if (-not [string]::IsNullOrWhiteSpace($status) -and -not $readiness.Known) {
+    # STATE.yaml carries a status the lifecycle table does not know -- hand-edited, or a skipped step
+    # left it polluted. Every step below is derived from a status the table understands, so print the
+    # one repair action machine-readably and stop, instead of empty "继续..." steps that send the
+    # agent off to re-improvise the order (the ISSUE-096 relapse the validator now also guards).
+    $legalStatuses = @((Get-LifecycleTable).states | ForEach-Object { [string]$_.status })
+    Write-Output ''
+    Write-Output ("STATE_REPAIR_REQUIRED: STATE.yaml 的 status=" + $status + " 不在生命周期表里，先修状态再谈下一步")
+    Write-Output "NEXT-STATUS: STATE_REPAIR"
+    Write-Output "NEXT-ACTION: 用 update-product-state.ps1 把 status 改回下列合法值之一，再重新运行本脚本（不要手改 STATE.yaml）"
+    Write-Output ("BLOCKING-FACTS: status=" + $status + "; 合法值=" + ($legalStatuses -join ', '))
+    exit 0
+}
 Write-Output ("当前状态: " + $status + "（" + $readiness.Meaning + "）")
+Write-Output ("CURRENT-USER-TESTABILITY: " + (Get-UserTestability -StateRoot $stateRoot -Status $status))
 
 $stepNumber = 0
 Write-Output ''

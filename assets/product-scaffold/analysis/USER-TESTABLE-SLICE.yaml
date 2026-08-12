@@ -1,0 +1,12 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+# 最小用户可测试切片：一条真实可跑的核心链路，未定义前不得进入构建/打包。
+# GUI 入口 → 授权检查 → 真实输入/操作 → 真实副作用 → 真实进度/结果 → 取消或回滚 → GUI 刷新 → 最小可重复验证。
+slice_status: "UNKNOWN"
+gui_entry: "UNVERIFIED"
+auth_checkpoint: "UNVERIFIED"
+real_operation: "UNVERIFIED"
+observable_result: "UNVERIFIED"
+cancel_or_rollback: "UNVERIFIED"
+minimal_repeatable_check: "UNVERIFIED"
+source_of_truth: "product-state/analysis/USER-TESTABLE-SLICE.yaml"

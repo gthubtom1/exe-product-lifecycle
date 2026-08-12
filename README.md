@@ -38,6 +38,7 @@ https://github.com/gthubtom1/exe-product-lifecycle
 
 | 宿主 | 全局（所有项目可用） | 项目内 |
 | --- | --- | --- |
+| 厂商中立（推荐，任意 agent 通用） | `~/.agents/skills/exe-product-lifecycle/` | `.agents/skills/exe-product-lifecycle/` |
 | Cursor | `~/.cursor/skills/exe-product-lifecycle/` | `.cursor/skills/exe-product-lifecycle/` |
 | Claude Code / Claude Desktop | `~/.claude/skills/exe-product-lifecycle/` | `.claude/skills/exe-product-lifecycle/` |
 | Codex | `~/.codex/skills/exe-product-lifecycle/` | `.codex/skills/exe-product-lifecycle/` |
@@ -45,6 +46,8 @@ https://github.com/gthubtom1/exe-product-lifecycle
 Windows 上 `~` 就是 `%USERPROFILE%`，例如 `C:\Users\你的用户名\.cursor\skills\exe-product-lifecycle\`。
 
 Cursor 出于兼容也会加载 `~/.claude/skills/` 和 `~/.codex/skills/`，所以三个宿主都在用的话，装一份到 `~/.codex/skills/` 通常就够了。
+
+`.agents/skills/` 是厂商中立的官方约定位置，越来越多宿主（含 Cursor）原生识别；想让"把这个 URL 甩给任意 agent 就能自装"最稳妥，优先装到这里。
 
 ### 安装命令（PowerShell）
 
