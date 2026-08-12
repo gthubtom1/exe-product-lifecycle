@@ -29,6 +29,9 @@ jobs:
       - name: Run evolution regression
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-evolution.ps1
+      - name: Run knowledge hash regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-knowledge-hash.ps1
       - name: Run product scaffold regression
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-product-scaffold.ps1
@@ -72,6 +75,9 @@ jobs:
       - name: Run evolution regression
         shell: pwsh
         run: ./scripts/test-evolution.ps1
+      - name: Run knowledge hash regression
+        shell: pwsh
+        run: ./scripts/test-knowledge-hash.ps1
       - name: Run product scaffold regression
         shell: pwsh
         run: ./scripts/test-product-scaffold.ps1

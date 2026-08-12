@@ -5,7 +5,7 @@
   "status": "candidate",
   "created_at": "2026-08-12T05:56:24.7844652+00:00",
   "updated_at": "2026-08-12T05:56:24.7844652+00:00",
-  "payload_sha256": "623887770983013B74CC49A4C419D52D132D0AD45B0656E4FF68DD914D8AB239",
+  "payload_sha256": "1C111A13C9D89D758244A54382E68A899304A5F3F74D2FADE173BAF89AF618F2",
   "title": "Windows 目录有两个名字：容器判断前必须归一化成长名",
   "summary": "Windows 给同一个目录一个长名和一个 8.3 短名；脚本里所有「这个路径在不在那个目录里」的判断若直接做字符串前缀比较，短名和长名对不上，一个合法路径会被判成越界、相对路径还会被从名字中间切断。动手比较前，先把每个根按段用目录枚举解析成长名再比。",
   "category": "tooling",
@@ -66,7 +66,7 @@
     "reviewed_status": "pending",
     "scan_version": 1,
     "checked_at": "2026-08-12T05:56:24.7844652+00:00",
-    "payload_sha256": "623887770983013B74CC49A4C419D52D132D0AD45B0656E4FF68DD914D8AB239",
+    "payload_sha256": "1C111A13C9D89D758244A54382E68A899304A5F3F74D2FADE173BAF89AF618F2",
     "findings": []
   },
   "reviews": []

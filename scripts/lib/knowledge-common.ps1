@@ -318,7 +318,13 @@ function Get-ExperiencePayloadHash {
         source_evidence = $evidence
         pattern = $normalized.pattern
     }
-    $json = (($payload | ConvertTo-Json -Depth 30) -replace "`r`n", "`n")
+    # ConvertTo-Json is host-dependent for non-ASCII: Windows PowerShell 5.1 escapes CJK as \uXXXX,
+    # PowerShell 7 emits it raw. So a record whose payload carried Chinese hashed to one value on the
+    # host that wrote it and a different value on the host that re-validated it -- green on 5.1, a
+    # "payload hash mismatch" on the pwsh 7 lane. ConvertTo-CanonicalJson emits the same bytes on
+    # both hosts (the guarantee the knowledge index already leans on), so the payload hash is
+    # reproducible across hosts regardless of the language in the record.
+    $json = ConvertTo-CanonicalJson -Value $payload
     return Get-StringSha256 -Value $json
 }
 

@@ -5,7 +5,7 @@
   "status": "candidate",
   "created_at": "2026-08-12T05:56:24.7844652+00:00",
   "updated_at": "2026-08-12T05:56:24.7844652+00:00",
-  "payload_sha256": "F3AC4C503ABD4BBFBA700B22EC77874B21DD6D876D45ADFB554FB6800D3DC001",
+  "payload_sha256": "1AAC36CF75DA053FAD3B4FEADE0FFE7FC9D9ED16C7C0EEA45FA757C822F139CD",
   "title": "单向镜像同步会删掉只在安装副本里的学习产物，必须显式保留",
   "summary": "把源目录镜像到安装副本的同步脚本，如果清理逻辑是「删除源里没有的文件」，就会连带删掉只存在于安装副本、还没发布的学习或经验文件——它们别处没有备份。同步必须显式识别并保留这类产物，并对本身已是克隆的副本直接拒绝覆盖式同步。",
   "category": "tooling",
@@ -65,7 +65,7 @@
     "reviewed_status": "pending",
     "scan_version": 1,
     "checked_at": "2026-08-12T05:56:24.7844652+00:00",
-    "payload_sha256": "F3AC4C503ABD4BBFBA700B22EC77874B21DD6D876D45ADFB554FB6800D3DC001",
+    "payload_sha256": "1AAC36CF75DA053FAD3B4FEADE0FFE7FC9D9ED16C7C0EEA45FA757C822F139CD",
     "findings": []
   },
   "reviews": []

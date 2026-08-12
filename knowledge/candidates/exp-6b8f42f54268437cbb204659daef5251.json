@@ -5,7 +5,7 @@
   "status": "candidate",
   "created_at": "2026-08-12T05:56:24.7844652+00:00",
   "updated_at": "2026-08-12T05:56:24.7844652+00:00",
-  "payload_sha256": "26C19F18D5A34A4EB6971D3BC8A334C8947CF6F0BFF2893E0088BC2AB4A2B797",
+  "payload_sha256": "0AF29483B408C4FC509D13BA1E2F9A92AF014BC6A7087D2A62D9C8F8C5F459D7",
   "title": "PowerShell 自测脚本必须显式 exit 0，否则残留退出码会变成步骤结果",
   "summary": "脚本里若干场景会故意运行返回非零的子进程作为正常流程，$LASTEXITCODE 会停在最后一个非零值上。用 -File 启动时无害，但 CI 常用 -command 调用，残留码就成了整个步骤的结果——于是出现「全部断言通过」的下一行却是步骤失败。断言全绿后要显式 exit 0，同时保证真有失败时仍返回 1。",
   "category": "tooling",
@@ -66,7 +66,7 @@
     "reviewed_status": "pending",
     "scan_version": 1,
     "checked_at": "2026-08-12T05:56:24.7844652+00:00",
-    "payload_sha256": "26C19F18D5A34A4EB6971D3BC8A334C8947CF6F0BFF2893E0088BC2AB4A2B797",
+    "payload_sha256": "0AF29483B408C4FC509D13BA1E2F9A92AF014BC6A7087D2A62D9C8F8C5F459D7",
     "findings": []
   },
   "reviews": []
