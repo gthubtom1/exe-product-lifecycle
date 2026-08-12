@@ -1,0 +1,65 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+status: "PENDING"
+launcher:
+  path: "UNVERIFIED"
+  arguments: []
+  working_directory: "UNVERIFIED"
+  environment: []
+  process_id_or_session_handoff: "UNVERIFIED"
+authorization_handoff:
+  success_signal: "UNVERIFIED"
+  failure_signal: "UNVERIFIED"
+  session_kind: "UNVERIFIED"
+  fields: []
+  cache_location: "UNVERIFIED"
+core:
+  path: "UNVERIFIED"
+  arguments: []
+  working_directory: "UNVERIFIED"
+  environment: []
+  child_processes: []
+original_authorization:
+  observed: "UNVERIFIED"
+  user_visible_disposition: "UNVERIFIED"
+  values:
+    - "retain"
+    - "replace"
+    - "move_behind_launcher"
+    - "disable_via_product_adapter"
+    - "unverified"
+  core_gate_after_launcher: "UNVERIFIED"
+failure_behavior:
+  invalid_license: "UNVERIFIED"
+  expired_license: "UNVERIFIED"
+  revoked_license: "UNVERIFIED"
+  device_change: "UNVERIFIED"
+  offline: "UNVERIFIED"
+  server_error: "UNVERIFIED"
+  exit_codes: []
+update_behavior:
+  who_checks: "UNVERIFIED"
+  restart_required: "UNVERIFIED"
+  rollback_trigger: "UNVERIFIED"
+# 绑定强度：启动器和核心程序"绑得有多死"，即破解者能不能绕过启动器直接运行核心。
+# claimed_tier 是打算做到的级别，verified_tier 是实测真正做到的级别；两者必须诚实、
+# 不许把 claimed 写成 A 却拿不出 A 的证据。上限由 PROTECTION-PROFILE.yaml 的 verdict
+# 决定：WRAPPER_ONLY 的核心改不动，最高只能到 C。字段名全局唯一，便于门禁逐条校验。
+binding_strength:
+  claimed_tier: "UNKNOWN"          # A | B | C | UNKNOWN
+  verified_tier: "UNVERIFIED"      # 实测真正达到的级别，诚实标注，不得高于已有证据
+  protection_ceiling: "UNVERIFIED" # 由 PROTECTION-PROFILE.yaml verdict 推出的绑定上限
+  bypass_risk: "UNVERIFIED"        # 一句话说清这个级别下核心怎么被绕过（任何级别都必须填）
+  tier_definitions:
+    A: "强绑定：核心运行必需的密钥/配置/资源由授权服务器下发，启动器解密注入后核心才能跑；绕过启动器=核心缺必需材料=跑不起来"
+    B: "中等绑定：核心可独立启动，但关键校验点已改造为必须由启动器注入的会话凭证/令牌放行；绕过需重新逆向核心校验点"
+    C: "弱绑定/仅外壳：核心未被改动、可独立运行，启动器只在前面加一道登录门；破解者直接运行核心即可绕过"
+  # 下列证据按声称级别校验：A 级要前两条，B 级要中间两条，C 级要最后一条。
+  evidence_a_server_issued_material: "UNVERIFIED"     # 服务器确实下发了运行必需材料（非 yes/no）的证据引用
+  evidence_a_core_fails_without_material: "UNVERIFIED" # 抽掉材料后核心无法运行的实测证据
+  evidence_b_core_checkpoint_patched: "UNVERIFIED"    # 核心侧校验改造点的位置与补丁/覆盖记录
+  evidence_b_launcher_injected_token: "UNVERIFIED"    # 启动器向核心注入会话凭证的证据
+  evidence_c_wrapper_only_ack: "UNVERIFIED"           # 明确承认核心可被直接运行绕过（诚实声明，不是遮掩）
+  verification: "UNVERIFIED"       # 验证命令或受控证据
+verification_refs: []
+open_questions: []

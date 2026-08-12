@@ -1,0 +1,1 @@
+Negative fixture observation: a single native executable has no nested payload or sidecar inventory. Do not apply a nested-installer pattern; continue normal PE analysis.

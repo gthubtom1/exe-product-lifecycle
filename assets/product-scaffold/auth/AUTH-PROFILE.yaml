@@ -1,0 +1,38 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+integration_status: "DISCOVERY_PENDING"
+client_entrypoint: "UNVERIFIED"
+core_entrypoint: "__CORE_FILE__"
+original_auth_surface: "UNVERIFIED"
+desired_user_flow: "launcher -> authorization contract -> core"
+launch_contract: "product-state/auth/LAUNCH-CONTRACT.yaml"
+user_visible_original_auth: "UNVERIFIED"
+core_gate_after_launcher: "UNVERIFIED"
+identity:
+  app_id: "UNVERIFIED"
+  installation_id: "UNVERIFIED"
+  device_data: "UNVERIFIED"
+entitlement:
+  license_key: "UNVERIFIED"
+  product_mapping: "__PRODUCT_ID__"
+  expiry: "UNVERIFIED"
+  feature_claims: "UNVERIFIED"
+server_contract:
+  base_url: "UNVERIFIED"
+  verify_operation: "UNVERIFIED"
+  request_fields: []
+  response_fields: []
+  error_codes: []
+session:
+  token_kind: "UNVERIFIED"
+  cache: "UNVERIFIED"
+offline:
+  allowed: "UNVERIFIED"
+  maximum_age: "UNVERIFIED"
+release_access:
+  version_query: "UNVERIFIED"
+  package_download: "UNVERIFIED"
+  publish_request: "product-state/release/RELEASE-PUBLISH-REQUEST.md"
+evidence_refs: []
+open_questions: []
+secrets_policy: "Do not store admin credentials, private keys, or complete customer tokens here"

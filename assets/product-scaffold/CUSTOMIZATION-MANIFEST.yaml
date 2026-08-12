@@ -1,0 +1,11 @@
+schema_version: 2
+product_id: "__PRODUCT_ID__"
+customization_version: "0.1.0"
+source_of_truth: "product-state/CUSTOMIZATION-MANIFEST.yaml plus maintained source/overlay/patch records"
+maintenance_mode_ref: "product-state/MAINTENANCE-MODE.yaml"
+rules: []
+# Each rule should include:
+# id, category, component, anchor, operation, source, strategy, versions,
+# conflict_policy, verification, rollback, status
+# Categories include branding, ui, contact, features, runtime, auth, launcher,
+# update, and release. A rule without a stable anchor is a migration conflict.

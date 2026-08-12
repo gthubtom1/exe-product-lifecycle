@@ -1,0 +1,22 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+status: "PENDING"
+processes: []
+files_and_registry: []
+sidecars: []
+hooks_or_instrumentation: []
+permissions: []
+external_hosts: []
+backup:
+  required: "UNVERIFIED"
+  locations: []
+cleanup:
+  command: "UNVERIFIED"
+  scope: "UNVERIFIED"
+recovery:
+  command: "UNVERIFIED"
+  evidence: "UNVERIFIED"
+# Record only product-specific host integration. An empty list is not proof
+# that the product has no host integration.
+evidence_refs: []
+open_questions: []

@@ -1,0 +1,4 @@
+interface:
+  display_name: "EXE Product Lifecycle"
+  short_description: "按产品独立档案做 EXE 二次发行、授权衔接、持续更新和经验晋升"
+  default_prompt: "我不懂技术。最少只提供一个 EXE；说明文件有就一起使用，没有也先开始。请自动建立产品档案，保留并迁移已有 Logo、联系方式、UI、功能、Launcher 和授权流程。不要让我选择工具、填写参数或运行命令，只在会改变结果的问题上用中文问我。首次分析后请明确告诉我属于‘可自动迁移’、‘部分内容需要确认’还是‘需要重新实现’。"

@@ -1,0 +1,535 @@
+#requires -Version 5
+
+<#
+Shared product-state primitives for init-product.ps1, register-input-bundle.ps1,
+update-product-state.ps1 and validate-product-state.ps1.
+
+Dot-source it:
+
+    . (Join-Path $PSScriptRoot 'lib\product-state-common.ps1')
+
+Why this file exists: the same three fields (product_id, status, baseline_sha256) used to be
+parsed by three hand-written regexes with three different notions of what valid YAML is. The
+validator accepted `product_id: foo`; both writer scripts demanded `product_id: "foo"` and threw
+a raw PowerShell stack trace at a user who is not supposed to know what YAML is. One reader, one
+writer, one error shape.
+#>
+
+Set-StrictMode -Version Latest
+
+# Captured at dot-source time: $PSScriptRoot is this file's directory, so the skill root stays
+# correct no matter which script dot-sources it or from which working directory it runs.
+$ProductStateSkillRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+
+function Read-TextFileSafe {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    # Get-Content -Raw yields $null for a zero-byte file, and every regex downstream would then
+    # throw under StrictMode. A truncated file is a finding to report, not a reason to crash.
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    $text = Get-Content -Raw -LiteralPath $Path
+    if ($null -eq $text) { return '' }
+    return $text
+}
+
+function Get-PropertyValue {
+    param($InputObject, [Parameter(Mandatory = $true)][string]$Name, $Default = $null)
+
+    # Set-StrictMode turns a missing property into a terminating error, and every property read that
+    # uses this is against a file a human may have edited or an older skill version may have written.
+    # Reading such a file must degrade gracefully, never abort the run.
+    if ($null -eq $InputObject) { return $Default }
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) { return $Default }
+    return $property.Value
+}
+
+function ConvertTo-BooleanValue {
+    param($Value)
+
+    # "False" read back from a hand-edited JSON is a non-empty string, and [bool] would call it true.
+    if ($Value -is [string]) { return ($Value -match '^(?i)\s*true\s*$') }
+    return [bool]$Value
+}
+
+function Get-YamlScalar {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+
+    # Reads a top-level scalar whether or not it is quoted, and with any trailing comment
+    # removed. Requiring quotes is how the identity and simulation gates used to collapse:
+    # `product_id: foo` and `simulation_only: true  # note` are both valid YAML, matched
+    # nothing, and every comparison downstream then quietly compared against an empty string.
+    $match = [regex]::Match($Text, ('(?m)^{0}:[ \t]*(.*?)[ \t\r]*$' -f [regex]::Escape($Key)))
+    if (-not $match.Success) { return '' }
+    $value = $match.Groups[1].Value
+    if ($value.StartsWith('#')) { return '' }
+    $value = ($value -replace '[ \t]+#.*$', '').Trim()
+    if ($value.Length -ge 2) {
+        $first = $value.Substring(0, 1)
+        $last = $value.Substring($value.Length - 1, 1)
+        if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+    }
+    return $value.Trim()
+}
+
+function Get-IndentedYamlScalar {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+
+    # Like Get-YamlScalar but tolerates leading indentation, so a field one level under a block
+    # (e.g. binding_strength.claimed_tier) can be read without a full nested parser. Safe only
+    # because the keys it is used for are globally unique in the file; do not point it at a key
+    # that also appears at top level.
+    $match = [regex]::Match($Text, ('(?m)^[ \t]*{0}:[ \t]*(.*?)[ \t\r]*$' -f [regex]::Escape($Key)))
+    if (-not $match.Success) { return '' }
+    $value = $match.Groups[1].Value
+    if ($value.StartsWith('#')) { return '' }
+    $value = ($value -replace '[ \t]+#.*$', '').Trim()
+    if ($value.Length -ge 2) {
+        $first = $value.Substring(0, 1)
+        $last = $value.Substring($value.Length - 1, 1)
+        if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+    }
+    return $value.Trim()
+}
+
+function Test-BindingStrengthEvidence {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string[]]$UnsettledValues
+    )
+
+    # The whole point of tiered binding is to stop "claimed strong, proven nothing". A claimed
+    # tier is only honoured when the evidence THAT tier needs is settled, and every tier must
+    # spell out how it can be bypassed -- silence about the bypass is itself the failure.
+    $isSettled = {
+        param($value)
+        $trimmed = ([string]$value).Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmed)) { return $false }
+        return ($UnsettledValues -notcontains $trimmed)
+    }
+
+    $claimed = (Get-IndentedYamlScalar -Text $Text -Key 'claimed_tier').ToUpperInvariant()
+    if ($claimed -notin @('A', 'B', 'C')) { return $false }
+    if (-not (& $isSettled (Get-IndentedYamlScalar -Text $Text -Key 'verified_tier'))) { return $false }
+    if (-not (& $isSettled (Get-IndentedYamlScalar -Text $Text -Key 'bypass_risk'))) { return $false }
+
+    $required = switch ($claimed) {
+        'A' { @('evidence_a_server_issued_material', 'evidence_a_core_fails_without_material') }
+        'B' { @('evidence_b_core_checkpoint_patched', 'evidence_b_launcher_injected_token') }
+        'C' { @('evidence_c_wrapper_only_ack') }
+    }
+    foreach ($field in $required) {
+        if (-not (& $isSettled (Get-IndentedYamlScalar -Text $Text -Key $field))) { return $false }
+    }
+    return $true
+}
+
+function ConvertTo-YamlScalar {
+    param([AllowNull()][string]$Value)
+
+    if ($null -eq $Value) { return '""' }
+    return '"' + $Value.Replace('\', '/').Replace('"', '\"') + '"'
+}
+
+function Set-YamlScalar {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value
+    )
+
+    # Rewrites a top-level scalar in place, preserving the rest of the file byte for byte and the
+    # original line ending. A key that is not present is appended, because a caller that asks to
+    # set a field and gets silence back has no way to tell "written" from "quietly dropped".
+    $replacement = ('{0}: {1}' -f $Key, (ConvertTo-YamlScalar $Value))
+    $pattern = ('(?m)^{0}:[ \t]*.*?[ \t]*$' -f [regex]::Escape($Key))
+    if ([regex]::IsMatch($Text, $pattern)) {
+        return [regex]::Replace($Text, $pattern, { param($m) $replacement }, 1)
+    }
+    $newline = if ($Text -match "`r`n") { "`r`n" } else { "`n" }
+    if (-not [string]::IsNullOrEmpty($Text) -and -not $Text.EndsWith("`n")) { $Text += $newline }
+    return $Text + $replacement + $newline
+}
+
+function Set-YamlList {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [AllowNull()][string[]]$Items
+    )
+
+    $newline = "`n"
+    if ($Text -match "`r`n") { $newline = "`r`n" }
+    $rendered = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Items -or @($Items).Count -eq 0) {
+        [void]$rendered.Add(('{0}: []' -f $Key))
+    }
+    else {
+        [void]$rendered.Add(('{0}:' -f $Key))
+        foreach ($item in $Items) { [void]$rendered.Add('  - ' + (ConvertTo-YamlScalar $item)) }
+    }
+    $block = ($rendered -join $newline)
+
+    $lines = $Text -split "`r?`n"
+    $pattern = ('^{0}:[ \t]*(.*)$' -f [regex]::Escape($Key))
+    $output = New-Object System.Collections.Generic.List[string]
+    $replaced = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $match = [regex]::Match($lines[$i], $pattern)
+        if (-not $match.Success -or $replaced) {
+            [void]$output.Add($lines[$i])
+            continue
+        }
+        [void]$output.Add($block)
+        $replaced = $true
+        # Swallow the previous list body so the old items do not survive underneath the new block.
+        $inline = ($match.Groups[1].Value -replace '[ \t]+#.*$', '').Trim()
+        if ([string]::IsNullOrWhiteSpace($inline)) {
+            while ($i + 1 -lt $lines.Count) {
+                $peek = $lines[$i + 1]
+                if ([string]::IsNullOrWhiteSpace($peek)) { break }
+                if ($peek -notmatch '^\s') { break }
+                $i++
+            }
+        }
+    }
+    if (-not $replaced) {
+        [void]$output.Add($block)
+    }
+    return ($output -join $newline)
+}
+
+function Write-FileAtomic {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Content
+    )
+
+    # Set-Content truncates the destination before it writes, so an interruption leaves a
+    # half-written file behind that the next run reads back as authoritative. Write a sibling temp
+    # file and swap it in, so the previous content stays intact until the new one is complete.
+    #
+    # The swap must be File::Replace, not Move-Item -Force. Move-Item -Force is NOT a single
+    # replace: FileSystemWatcher shows it emit "Deleted:<name>" and only then "Renamed:<name>",
+    # i.e. there is a window in which the file does not exist at all. File::Replace emits
+    # "Renamed:<backup>" then "Renamed:<name>" -- the destination name always resolves to a
+    # complete file. Its third argument must be a real backup path: Windows PowerShell binds $null
+    # to the [string] parameter as "" and the call then fails with "The path is not of a legal form."
+    #
+    # Encoding is deliberately UTF-8 *with* BOM plus a trailing newline, byte-for-byte what
+    # Set-Content -Encoding utf8 produced under Windows PowerShell 5.1.
+    $directory = Split-Path -Parent $Path
+    $leaf = Split-Path -Leaf $Path
+    $stamp = [guid]::NewGuid().ToString('N')
+    $temp = Join-Path $directory ('.{0}.tmp-{1}' -f $leaf, $stamp)
+    $backup = Join-Path $directory ('.{0}.bak-{1}' -f $leaf, $stamp)
+    try {
+        [System.IO.File]::WriteAllText($temp, ($Content + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($true)))
+        $attempt = 0
+        while ($true) {
+            $attempt++
+            try {
+                if (Test-Path -LiteralPath $Path -PathType Leaf) {
+                    [System.IO.File]::Replace($temp, $Path, $backup)
+                }
+                else {
+                    [System.IO.File]::Move($temp, $Path)
+                }
+                break
+            }
+            catch {
+                # A virus scanner, indexer or an editor holding the file open is transient.
+                if ($attempt -ge 3) { throw }
+                Start-Sleep -Milliseconds (150 * $attempt)
+            }
+        }
+    }
+    finally {
+        foreach ($leftover in @($temp, $backup)) {
+            if (Test-Path -LiteralPath $leftover -PathType Leaf) {
+                Remove-Item -LiteralPath $leftover -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+function Get-ProductStateField {
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+
+    return Get-YamlScalar -Text (Read-TextFileSafe -Path (Join-Path $StateRoot 'STATE.yaml')) -Key $Key
+}
+
+function Get-YamlListCount {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+
+    # Returns -1 when the key is absent, 0 for an explicitly empty list, otherwise the number of
+    # list items found. "Key absent" and "key present but empty" are different findings: the first
+    # means the file is not the one we think it is, the second means nobody filled it in yet.
+    $lines = $Text -split "`r?`n"
+    $pattern = ('^{0}:[ \t]*(.*)$' -f [regex]::Escape($Key))
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $match = [regex]::Match($lines[$i], $pattern)
+        if (-not $match.Success) { continue }
+        $inline = ($match.Groups[1].Value -replace '[ \t]+#.*$', '').Trim()
+        if ($inline -eq '[]') { return 0 }
+        if (-not [string]::IsNullOrWhiteSpace($inline)) { return 1 }
+        $count = 0
+        for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+            $line = $lines[$j]
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            if ($line -match '^\s*#') { continue }
+            if ($line -notmatch '^\s') { break }
+            if ($line -match '^\s+-\s') { $count++ }
+        }
+        return $count
+    }
+    return -1
+}
+
+function Get-LifecycleTable {
+    param([string]$SkillRoot)
+
+    if ([string]::IsNullOrWhiteSpace($SkillRoot)) { $SkillRoot = $ProductStateSkillRoot }
+    $path = Join-Path $SkillRoot 'assets\lifecycle-states.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw (New-UserFacingError -Message "生命周期状态表缺失: $path" `
+            -Hint '这个 Skill 的安装不完整，重新同步一次 Skill 文件。')
+    }
+    return (Read-TextFileSafe -Path $path | ConvertFrom-Json)
+}
+
+function Test-LifecycleRequirement {
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)]$Requirement,
+        [Parameter(Mandatory = $true)][string[]]$UnsettledValues
+    )
+
+    $kind = [string]$Requirement.kind
+    $relative = if ($Requirement.PSObject.Properties.Name -contains 'path') { [string]$Requirement.path } else { '' }
+    $full = if ([string]::IsNullOrWhiteSpace($relative)) { '' } else { Join-Path $StateRoot ($relative.Replace('/', '\')) }
+
+    switch ($kind) {
+        'file_present' {
+            return (Test-Path -LiteralPath $full -PathType Leaf)
+        }
+        'yaml_settled' {
+            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
+            $value = (Get-YamlScalar -Text (Read-TextFileSafe -Path $full) -Key ([string]$Requirement.key)).Trim()
+            # A missing key is unsettled for the same reason a PENDING one is: nobody decided yet.
+            # It is kept out of the table's value list because a Mandatory [string[]] parameter
+            # refuses an empty element, and a silently dropped entry is a silently opened gate.
+            if ([string]::IsNullOrWhiteSpace($value)) { return $false }
+            return ($UnsettledValues -notcontains $value)
+        }
+        'yaml_list_not_empty' {
+            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
+            return ((Get-YamlListCount -Text (Read-TextFileSafe -Path $full) -Key ([string]$Requirement.key)) -gt 0)
+        }
+        'text_contains_any' {
+            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
+            $text = Read-TextFileSafe -Path $full
+            foreach ($candidate in @($Requirement.values)) {
+                if ($text -like ('*' + [string]$candidate + '*')) { return $true }
+            }
+            return $false
+        }
+        'state_no_blocking_items' {
+            $statePath = Join-Path $StateRoot 'STATE.yaml'
+            if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return $false }
+            return ((Get-YamlListCount -Text (Read-TextFileSafe -Path $statePath) -Key 'blocking_items') -le 0)
+        }
+        'binding_strength_backed' {
+            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
+            return (Test-BindingStrengthEvidence -Text (Read-TextFileSafe -Path $full) -UnsettledValues $UnsettledValues)
+        }
+        default {
+            # An unknown check kind must fail closed. Returning "satisfied" for a rule nobody
+            # implemented is how a gate quietly stops being a gate.
+            return $false
+        }
+    }
+}
+
+function Get-LifecycleReadiness {
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Status,
+        [string]$SkillRoot
+    )
+
+    $table = Get-LifecycleTable -SkillRoot $SkillRoot
+    $unsettled = @($table.unsettled_values | ForEach-Object { [string]$_ })
+    $states = @($table.states)
+    $current = @($states | Where-Object { [string]$_.status -eq $Status }) | Select-Object -First 1
+
+    $unmet = New-Object System.Collections.Generic.List[object]
+    if ($null -ne $current -and $null -ne $current.order) {
+        # Cumulative by design: claiming a rung of the ladder claims every rung below it. Checking
+        # only the declared status is what let a brand-new product jump straight to BUILD_READY.
+        $reached = @($states | Where-Object { $null -ne $_.order -and [int]$_.order -le [int]$current.order })
+        foreach ($state in ($reached | Sort-Object { [int]$_.order })) {
+            foreach ($requirement in @($state.requires)) {
+                if (-not (Test-LifecycleRequirement -StateRoot $StateRoot -Requirement $requirement -UnsettledValues $unsettled)) {
+                    [void]$unmet.Add([pscustomobject]@{
+                        RequiredBy = [string]$state.status
+                        Why = [string]$requirement.why
+                        Detail = ('{0} / {1}' -f [string]$requirement.kind, [string]$requirement.path)
+                    })
+                }
+            }
+        }
+    }
+
+    $next = $null
+    if ($null -ne $current -and -not [string]::IsNullOrWhiteSpace([string]$current.next_status)) {
+        $next = @($states | Where-Object { [string]$_.status -eq [string]$current.next_status }) | Select-Object -First 1
+    }
+
+    $pendingForNext = New-Object System.Collections.Generic.List[object]
+    if ($null -ne $next) {
+        foreach ($requirement in @($next.requires)) {
+            if (-not (Test-LifecycleRequirement -StateRoot $StateRoot -Requirement $requirement -UnsettledValues $unsettled)) {
+                [void]$pendingForNext.Add([pscustomobject]@{
+                    RequiredBy = [string]$next.status
+                    Why = [string]$requirement.why
+                    Detail = ('{0} / {1}' -f [string]$requirement.kind, [string]$requirement.path)
+                })
+            }
+        }
+    }
+
+    $meaning = ''
+    $nextStatus = ''
+    $nextAction = ''
+    if ($null -ne $current) {
+        $meaning = [string]$current.meaning
+        $nextStatus = [string]$current.next_status
+        $nextAction = [string]$current.next_action
+    }
+
+    # ToArray() rather than @($list): under Windows PowerShell 5.1, wrapping an *empty* generic
+    # List in @() inside a [pscustomobject] literal throws "Argument types do not match". The
+    # happy path -- a product with nothing unmet -- was the only path that hit it, so the gate
+    # aborted precisely when it had nothing to report.
+    $unmetItems = [object[]]$unmet.ToArray()
+    $pendingItems = [object[]]$pendingForNext.ToArray()
+
+    return [pscustomobject]@{
+        Known = ($null -ne $current)
+        Status = $Status
+        Meaning = $meaning
+        NextStatus = $nextStatus
+        NextAction = $nextAction
+        Unmet = $unmetItems
+        PendingForNext = $pendingItems
+    }
+}
+
+function New-UserFacingError {
+    param(
+        [Parameter(Mandatory = $true)][string]$Message,
+        [string]$Hint
+    )
+
+    # The audience of this skill is explicitly a user who does not know PowerShell. A message
+    # they cannot act on is the same as no message, so a hint is part of the contract, not decoration.
+    if ([string]::IsNullOrWhiteSpace($Hint)) { return $Message }
+    return ($Message + [Environment]::NewLine + '怎么办: ' + $Hint)
+}
+
+function Write-UserFacingFailure {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message,
+        [Parameter(Mandatory = $true)][string]$ScriptName,
+        [AllowNull()]$ErrorRecord
+    )
+
+    # Emitted from a trap, so it replaces the PowerShell stack trace rather than accompanying it.
+    # One compact location line survives: swallowing it entirely made an unexpected internal fault
+    # indistinguishable from an expected refusal, and left a maintainer with nothing to grep for.
+    Write-Output ('错误: ' + $Message)
+    $where = ''
+    if ($null -ne $ErrorRecord -and $null -ne $ErrorRecord.InvocationInfo) {
+        $where = ' 第 ' + [string]$ErrorRecord.InvocationInfo.ScriptLineNumber + ' 行'
+    }
+    Write-Output ('出错脚本: ' + $ScriptName + $where + '（这一步没有修改任何文件，可以修正后重跑）')
+}
+
+function Get-ModifiabilityVerdict {
+    param(
+        [string]$Packer = 'unknown',
+        [double]$EntropyTotal = 0.0,
+        [bool]$StatusSaysPacked = $false,
+        [string]$AntiDebug = 'unknown',
+        [string]$SelfCheck = 'unknown',
+        [string]$CodeSigning = 'unknown',
+        [string]$FileFormat = 'UNVERIFIED',
+        [string]$LanguageFramework = 'UNVERIFIED'
+    )
+
+    # The one decision the whole maintenance strategy hangs on: given the static evidence, can the
+    # target be patched, only wrapped, or nothing yet. It lives here as a pure function -- no file,
+    # no DIE, no target execution -- so every branch can be pinned by a test that fires when the
+    # branch is broken. Detecting protections but leaving the verdict untested is how a packed
+    # binary silently gets a "just patch it" strategy. Conservative on purpose: protection earns
+    # wrapping by default, and patching has to be earned by the absence of protection, never assumed.
+    $entropyHigh = ($EntropyTotal -gt 7.2)
+    $isPacked = ($Packer -notin @('none-detected', 'none', 'unknown', '')) -or $entropyHigh -or $StatusSaysPacked
+    if ($isPacked) {
+        return [pscustomobject]@{
+            Verdict = 'WRAPPER_ONLY'
+            Reason = '目标被加壳或高度加密，脱壳前看不到也改不动真实代码；默认只做外壳包裹，脱壳后另行评估。'
+            Hardening = 'no'
+        }
+    }
+    if ($AntiDebug -eq 'yes' -or $SelfCheck -eq 'yes') {
+        return [pscustomobject]@{
+            Verdict = 'OVERLAY_ONLY'
+            Reason = '存在反调试或自校验迹象，直接改字节可能被程序自己发现而拒绝运行；优先资源覆盖与外壳，改字节需先确认校验范围。'
+            Hardening = 'unknown'
+        }
+    }
+    if ($CodeSigning -eq 'signed') {
+        return [pscustomobject]@{
+            Verdict = 'OVERLAY_ONLY'
+            Reason = '目标有数字签名，改字节会使签名失效；优先资源覆盖与外壳，必须改核心时单独评估签名处置。'
+            Hardening = 'unknown'
+        }
+    }
+    if ($FileFormat -match '(?i)\.NET' -or $LanguageFramework -match '(?i)\.NET|C#|VB\.NET') {
+        return [pscustomobject]@{
+            Verdict = 'CAN_PATCH'
+            Reason = '.NET 托管程序，可用 dnSpy/ILSpy 反编译并在 IL 层修改；仍需在测试环境验证。'
+            Hardening = 'yes'
+        }
+    }
+    if ($Packer -eq 'none-detected' -and $AntiDebug -eq 'no') {
+        return [pscustomobject]@{
+            Verdict = 'CAN_PATCH'
+            Reason = '未发现加壳、反调试或签名阻碍，具备直接二进制补丁的条件；具体改动仍需在测试环境逐条验证。'
+            Hardening = 'yes'
+        }
+    }
+    return [pscustomobject]@{
+        Verdict = 'UNKNOWN'
+        Reason = '证据不足以判定可改性，需要人工用反汇编工具进一步确认后再定策略。'
+        Hardening = 'unknown'
+    }
+}

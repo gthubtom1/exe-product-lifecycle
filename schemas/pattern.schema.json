@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/exe-product-lifecycle/pattern.schema.json",
+  "title": "Reviewed shared lifecycle pattern",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "record_type", "experience_id", "status", "created_at", "updated_at", "payload_sha256", "title", "summary", "category", "tags", "source_evidence", "pattern", "sanitization", "reviews", "promotion"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "record_type": { "const": "shared_pattern" },
+    "experience_id": { "type": "string", "pattern": "^exp-[a-f0-9]{32}$" },
+    "status": { "enum": ["verified", "deprecated"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "payload_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+    "title": { "type": "string", "minLength": 8, "maxLength": 120 },
+    "summary": { "type": "string", "minLength": 20, "maxLength": 500 },
+    "category": { "enum": ["intake", "packaging", "runtime", "ui", "authorization", "update", "migration", "tooling", "release"] },
+    "tags": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,31}$" } },
+    "source_evidence": {
+      "type": "array",
+      "minItems": 4,
+      "items": { "$ref": "#/$defs/sourceEvidence" }
+    },
+    "pattern": { "$ref": "experience-draft.schema.json#/$defs/pattern" },
+    "sanitization": { "$ref": "#/$defs/sanitization" },
+    "reviews": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/review" } },
+    "promotion": { "$ref": "#/$defs/promotion" },
+    "deprecation": { "$ref": "#/$defs/deprecation" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "deprecated" } } },
+      "then": { "required": ["deprecation"] }
+    }
+  ],
+  "$defs": {
+    "sourceEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "source_kind", "evidence_role", "artifact_kind", "evidence_proof_id", "evidence_level"],
+      "properties": {
+        "source_id": { "type": "string", "pattern": "^src-[a-f0-9]{32}$" },
+        "source_kind": { "enum": ["real_product", "fixture"] },
+        "evidence_role": { "enum": ["supporting", "positive_fixture", "negative_fixture"] },
+        "artifact_kind": { "type": "string", "pattern": "^[a-z0-9._-]{2,40}$" },
+        "evidence_proof_id": { "type": "string", "pattern": "^proof-[a-f0-9]{32}$" },
+        "evidence_level": { "enum": ["static_present", "entrypoint_present", "locally_exercised", "dynamic_success", "failure_observed"] }
+      }
+    },
+    "sanitization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["automatic_scan", "reviewed_status", "scan_version", "checked_at", "payload_sha256", "findings"],
+      "properties": {
+        "automatic_scan": { "const": "passed" },
+        "reviewed_status": { "const": "approved" },
+        "scan_version": { "const": 1 },
+        "checked_at": { "type": "string", "format": "date-time" },
+        "payload_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+        "findings": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewer", "decision", "reviewed_at", "payload_sha256", "notes"],
+      "properties": {
+        "reviewer": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "decision": { "enum": ["approve", "reject"] },
+        "reviewed_at": { "type": "string", "format": "date-time" },
+        "payload_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+        "notes": { "type": "string", "minLength": 3, "maxLength": 500 }
+      }
+    },
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promoted_at", "promoted_by", "evidence_rule", "candidate_sha256", "payload_sha256"],
+      "properties": {
+        "promoted_at": { "type": "string", "format": "date-time" },
+        "promoted_by": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "evidence_rule": { "const": "two_real_products_plus_fixtures" },
+        "candidate_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+        "payload_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" }
+      }
+    },
+    "deprecation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deprecated_at", "deprecated_by", "reason", "replacement_id"],
+      "properties": {
+        "deprecated_at": { "type": "string", "format": "date-time" },
+        "deprecated_by": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "reason": { "type": "string", "minLength": 5, "maxLength": 500 },
+        "replacement_id": { "type": "string", "pattern": "^(|exp-[a-f0-9]{32})$" }
+      }
+    }
+  }
+}

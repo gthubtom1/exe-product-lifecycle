@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "title": "UNVERIFIED reusable pattern title",
+  "summary": "UNVERIFIED generic summary without product-specific names, paths, addresses, endpoints, identifiers, or secrets.",
+  "category": "tooling",
+  "tags": ["unverified-pattern"],
+  "evidence_level": "static_present",
+  "pattern": {
+    "applicability": ["UNVERIFIED: describe generic preconditions"],
+    "detection": ["UNVERIFIED: describe repeatable detection signals"],
+    "negative_indicators": ["UNVERIFIED: describe signals that rule this pattern out"],
+    "procedure": ["UNVERIFIED: describe the reusable operation"],
+    "verification": ["UNVERIFIED: describe observable pass conditions"],
+    "rollback": ["UNVERIFIED: describe how to restore the prior state"],
+    "failure_signals": ["UNVERIFIED: describe when the pattern must stop"],
+    "stop_conditions": ["UNVERIFIED: describe when the normal analysis path must be used"],
+    "limitations": ["UNVERIFIED: describe cases where the pattern does not apply"]
+  }
+}

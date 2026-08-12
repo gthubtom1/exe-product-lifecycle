@@ -1,0 +1,34 @@
+schema_version: 1
+status: "DRAFT"
+product_id: "__PRODUCT_ID__"
+release_id: "UNVERIFIED"
+version: "UNVERIFIED"
+base_upstream_version: "UNVERIFIED"
+customization_version: "0.1.0"
+adapter_version: "UNVERIFIED"
+profile_id: "UNVERIFIED"
+target: "windows"
+arch: "UNVERIFIED"
+channel: "UNVERIFIED"
+minimum_launcher_version: "UNVERIFIED"
+required_entitlements: []
+artifacts: []
+components: []
+component_manifest: "release/COMPONENT-RELEASE-MANIFEST.yaml"
+publish_request: "release/RELEASE-PUBLISH-REQUEST.md"
+verification:
+  baseline_command: "UNVERIFIED"
+  modified_command: "UNVERIFIED"
+  inputs: []
+  literal_outputs: []
+  exit_status: "UNVERIFIED"
+signature:
+  upstream_signature: "UNVERIFIED"
+  maintained_signature: "UNVERIFIED"
+  certificate_chain: "UNVERIFIED"
+  public_key_fingerprint: "UNVERIFIED"
+  failure_policy: "fail_closed"
+rollback_release_id: "UNVERIFIED"
+publication:
+  authorization: "not requested"
+  published_at: "UNVERIFIED"

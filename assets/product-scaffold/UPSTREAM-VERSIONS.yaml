@@ -1,0 +1,10 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+versions:
+  - version_id: "baseline-001"
+    kind: "upstream"
+    artifact_path: "__BASELINE_ARTIFACT__"
+    sha256: "__BASELINE_SHA256__"
+    received_at: "__DATE__"
+    status: "preserved"
+    notes: "首次接入基线；实际版本号待分析"

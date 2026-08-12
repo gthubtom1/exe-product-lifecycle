@@ -1,0 +1,89 @@
+name: Validate skill
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-skill-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-powershell-51:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate layout and knowledge
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-skill-layout.ps1
+      - name: Validate schema references
+        shell: powershell
+        run: python scripts/validate-schema-links.py
+      - name: Run evolution regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-evolution.ps1
+      - name: Run product scaffold regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-product-scaffold.ps1
+      - name: Run product state gate regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-product-state-gates.ps1
+      - name: Run protection assessment regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-detect-protections.ps1
+      - name: Run local temporary authorization contract regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-mock-authorization.ps1
+      - name: Run local temporary authorization transport regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-mock-authorization-http.ps1
+      - name: Run tool inventory reuse regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-tool-inventory-reuse.ps1
+      - name: Run install parity regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-install-parity.ps1
+
+  windows-powershell-7:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate layout and knowledge
+        shell: pwsh
+        run: ./scripts/validate-skill-layout.ps1
+      - name: Validate schema references
+        shell: pwsh
+        run: python scripts/validate-schema-links.py
+      - name: Run evolution regression
+        shell: pwsh
+        run: ./scripts/test-evolution.ps1
+      - name: Run product scaffold regression
+        shell: pwsh
+        run: ./scripts/test-product-scaffold.ps1
+      - name: Run product state gate regression
+        shell: pwsh
+        run: ./scripts/test-product-state-gates.ps1
+      - name: Run local temporary authorization contract regression
+        shell: pwsh
+        run: ./scripts/test-mock-authorization.ps1
+      - name: Run local temporary authorization transport regression
+        shell: pwsh
+        run: ./scripts/test-mock-authorization-http.ps1
+      - name: Run install parity regression
+        shell: pwsh
+        run: ./scripts/test-install-parity.ps1
+      - name: Verify generated files are committed
+        shell: pwsh
+        run: |
+          ./scripts/rebuild-knowledge-index.ps1
+          if (git status --short) { throw 'Generated knowledge index or lock is stale' }

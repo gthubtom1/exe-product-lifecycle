@@ -1,0 +1,4 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+evidence: []
+# Each item: id, mode, source, scope, confidence, claim_limit, path

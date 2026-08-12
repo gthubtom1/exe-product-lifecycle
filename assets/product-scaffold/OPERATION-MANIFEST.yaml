@@ -1,0 +1,36 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+status: "PENDING"
+source_of_truth: "product-state/OPERATION-MANIFEST.yaml"
+# Every module must become enabled, disabled, not_applicable, or unverified
+# before implementation. The template does not assume every product needs all
+# modules.
+modules:
+  license:
+    status: "required"
+    adapter_id: "UNVERIFIED"
+  user_admin:
+    status: "UNVERIFIED"
+  notice:
+    status: "UNVERIFIED"
+  feedback:
+    status: "UNVERIFIED"
+  contact_storefront:
+    status: "UNVERIFIED"
+  resource:
+    status: "UNVERIFIED"
+  update:
+    status: "UNVERIFIED"
+  config:
+    status: "UNVERIFIED"
+  telemetry_diagnostics:
+    status: "UNVERIFIED"
+  custom_ui_and_features:
+    status: "required"
+defaults:
+  unknown_module_behavior: "do_not_assume"
+  product_scope: "__PRODUCT_ID__"
+  fallback_contact: "UNVERIFIED"
+effective_version: "UNVERIFIED"
+evidence_refs: []
+open_questions: []

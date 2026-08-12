@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/exe-product-lifecycle/knowledge-index.schema.json",
+  "title": "Generated shared knowledge index",
+  "type": "object",
+  "required": ["schema_version", "skill_version", "generated_at", "entries"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "skill_version": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["experience_id", "status", "category", "title", "tags", "path", "sha256", "updated_at"],
+        "properties": {
+          "experience_id": { "type": "string" },
+          "status": { "enum": ["candidate", "verified", "deprecated"] },
+          "category": { "type": "string" },
+          "title": { "type": "string" },
+          "tags": { "type": "array" },
+          "path": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+          "updated_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

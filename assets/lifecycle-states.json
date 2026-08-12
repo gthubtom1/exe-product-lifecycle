@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "purpose": "Single source of truth for what each product status means, what evidence it requires, and what the next action is. Read by validate-product-state.ps1 (forward gate) and by the agent when resolving the first unfinished stage, so two agents cannot invent two different orders.",
+  "settled_rule": "A scaffold field counts as settled when it is present and is not PENDING, UNVERIFIED, UNKNOWN, DISCOVERY_PENDING, TBD or empty. Any value the agent deliberately writes -- including not_applicable -- counts as a decision.",
+  "unsettled_values": ["PENDING", "UNVERIFIED", "UNKNOWN", "DISCOVERY_PENDING", "TBD"],
+  "states": [
+    {
+      "status": "INIT",
+      "order": 0,
+      "meaning": "刚建好档案，还没有分析过这个程序",
+      "next_status": "BASELINE_CREATED",
+      "next_action": "保存并校验原始程序，登记用户交来的全部文件",
+      "requires": []
+    },
+    {
+      "status": "BASELINE_CREATED",
+      "order": 1,
+      "meaning": "原始程序已只读保存并算过校验值，输入已登记",
+      "next_status": "ANALYZED",
+      "next_action": "发现本机工具，分析程序，给出一句话迁移结论",
+      "requires": [
+        { "kind": "file_present", "path": "artifacts/BASELINE-MANIFEST.yaml", "why": "原始程序的保存位置和校验值还没有记录" },
+        { "kind": "file_present", "path": "artifacts/INPUT-MANIFEST.yaml", "why": "用户交来的文件清单还没有登记" }
+      ]
+    },
+    {
+      "status": "ANALYZED",
+      "order": 2,
+      "meaning": "程序已经分析过，已给出可否自动迁移的结论",
+      "next_status": "CUSTOMIZATION_RECORDED",
+      "next_action": "把要保留和要修改的品牌、界面、联系方式、功能逐条写成可复用规则",
+      "requires": [
+        { "kind": "file_present", "path": "tooling/TOOL-INVENTORY.md", "why": "还没有记录本机可用的分析工具" },
+        { "kind": "yaml_settled", "path": "PROTECTION-PROFILE.yaml", "key": "status", "why": "还没有探测目标的保护机制（加壳/自校验/反调试/签名）——能不能改、能不能加固都取决于它，运行 detect-protections.ps1；确认无保护可填 not_applicable" },
+        { "kind": "text_contains_any", "path": "PRODUCT-DOSSIER.md", "values": ["可自动迁移", "部分内容需要确认", "需要重新实现"], "why": "产品档案里还没有写出首次分析的一句话结论" }
+      ]
+    },
+    {
+      "status": "CUSTOMIZATION_RECORDED",
+      "order": 3,
+      "meaning": "定制内容已经写成规则，维护方式已经选定",
+      "next_status": "AUTH_HANDOFF_READY",
+      "next_action": "整理这个程序的授权现状，写出给授权平台的交接资料",
+      "requires": [
+        { "kind": "yaml_list_not_empty", "path": "CUSTOMIZATION-MANIFEST.yaml", "key": "rules", "why": "一条定制规则都还没有记录，新版迁移时无从比对" },
+        { "kind": "yaml_settled", "path": "MAINTENANCE-MODE.yaml", "key": "status", "why": "维护方式还停在待定" },
+        { "kind": "yaml_settled", "path": "MAINTENANCE-MODE.yaml", "key": "selected_strategy", "why": "还没有确定按源码、资源覆盖、二进制补丁还是外壳启动器来维护" }
+      ]
+    },
+    {
+      "status": "AUTH_HANDOFF_READY",
+      "order": 4,
+      "meaning": "给授权平台的交接资料已备好，但平台还没有回合同",
+      "next_status": "AUTH_CONTRACT_READY",
+      "next_action": "等授权平台返回合同，然后确定启动器到主程序的启动契约",
+      "requires": [
+        { "kind": "yaml_settled", "path": "auth/AUTH-PROFILE.yaml", "key": "integration_status", "why": "授权现状还停在待发现" },
+        { "kind": "file_present", "path": "auth/AUTH-ADAPTER-REQUEST.md", "why": "还没有写给授权平台的对接请求" }
+      ]
+    },
+    {
+      "status": "AUTH_CONTRACT_READY",
+      "order": 5,
+      "meaning": "启动器与主程序的启动和授权契约已经确定",
+      "next_status": "BUILD_READY",
+      "next_action": "补齐运营、证据、网络数据、宿主集成和输入安全五项政策，并确定工具方案",
+      "requires": [
+        { "kind": "yaml_settled", "path": "auth/LAUNCH-CONTRACT.yaml", "key": "status", "why": "启动契约还停在待定，不知道启动器成功后用户看到什么" },
+        { "kind": "binding_strength_backed", "path": "auth/LAUNCH-CONTRACT.yaml", "why": "启动器与核心的绑定强度没有定级、或声称的级别拿不出对应证据——声称 A 级却给不出服务器下发运行必需材料的证据，等于把仅外壳当强绑定卖给用户" }
+      ]
+    },
+    {
+      "status": "BUILD_READY",
+      "order": 6,
+      "meaning": "资料齐了，可以开始构建候选版本",
+      "next_status": "VERIFIED",
+      "next_action": "构建候选包，按测试矩阵逐条验证，并留下可运行的回滚路径",
+      "requires": [
+        { "kind": "yaml_settled", "path": "OPERATION-MANIFEST.yaml", "key": "status", "why": "运营模块选择还停在待定" },
+        { "kind": "yaml_settled", "path": "EVIDENCE-LEDGER.yaml", "key": "status", "why": "证据台账还停在待定" },
+        { "kind": "yaml_settled", "path": "NETWORK-DATA-POLICY.yaml", "key": "status", "why": "网络和数据边界还停在待定" },
+        { "kind": "yaml_settled", "path": "HOST-INTEGRATION-MANIFEST.yaml", "key": "status", "why": "宿主集成边界还停在待定" },
+        { "kind": "yaml_settled", "path": "INPUT-SAFETY-POLICY.yaml", "key": "status", "why": "输入安全政策还停在待定" },
+        { "kind": "yaml_settled", "path": "tooling/TOOL-PLAN.yaml", "key": "selection_status", "why": "还没有确定用哪些工具来构建和验证" },
+        { "kind": "state_no_blocking_items", "why": "档案里还列着阻塞项，不能同时声称可以构建" }
+      ]
+    },
+    {
+      "status": "VERIFIED_SIMULATION",
+      "order": 7,
+      "meaning": "用样例数据跑通了全流程，不是真实产品验证",
+      "next_status": "VERIFIED",
+      "next_action": "换成真实程序和真实授权，重新跑一遍测试矩阵",
+      "requires": []
+    },
+    {
+      "status": "VERIFIED",
+      "order": 7,
+      "meaning": "候选版本已经过真实验证，可以准备发布",
+      "next_status": "RELEASED",
+      "next_action": "生成发布请求，等平台返回登记记录后才算已发布",
+      "requires": []
+    },
+    {
+      "status": "RELEASED",
+      "order": 8,
+      "meaning": "平台已经登记并放行了这个版本",
+      "next_status": "",
+      "next_action": "等待下一个上游新版本，或按用户要求回滚",
+      "requires": [
+        { "kind": "file_present", "path": "release/RELEASE-PUBLISH-REQUEST.md", "why": "没有发布请求记录，无法证明平台真的登记过" }
+      ]
+    },
+    {
+      "status": "MIGRATION_REQUIRED",
+      "order": null,
+      "meaning": "新版本里有定制内容找不到落点，需要人工确认后才能继续",
+      "next_status": "",
+      "next_action": "逐条处理迁移冲突，处理完回到上一个可继续的阶段",
+      "requires": []
+    },
+    {
+      "status": "ROLLBACK_READY",
+      "order": null,
+      "meaning": "已经恢复到一个此前验证过的旧版本",
+      "next_status": "",
+      "next_action": "确认旧版本可用后，决定是继续维护还是重新迁移新版",
+      "requires": []
+    }
+  ]
+}

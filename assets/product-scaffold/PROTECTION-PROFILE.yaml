@@ -1,0 +1,38 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+# PENDING 未探测 / ASSESSED 已探测 / not_applicable 明确不适用（例如纯脚本无保护）
+status: "PENDING"
+target_file: "UNVERIFIED"
+# 文件格式与技术栈：由 detect-protections.ps1 用 DIE 探测，或由分析人工确认。
+file_format: "UNVERIFIED"        # PE32 / PE64 / .NET / APK / MSI / NSIS / Inno / Electron / ...
+language_framework: "UNVERIFIED" # C++ / .NET / Delphi / Python(PyInstaller) / Electron / Go / ...
+
+# 加壳与加密：决定“看不看得到真实代码、能不能直接改”。
+packing:
+  detector: "UNVERIFIED"         # 用哪个工具得出的结论，如 DIE / 熵分析
+  packer: "UNVERIFIED"           # UPX / VMProtect / Themida / ASProtect / Enigma / none / unknown
+  entropy_total: "UNVERIFIED"    # 总熵；>7.2 高度怀疑加壳或加密
+  packed_sections: []            # 高熵节名列表
+
+# 运行期保护：决定“直接改会不会被程序自己发现并拒绝运行”。
+protections:
+  self_integrity_check: "UNVERIFIED"  # 自校验/完整性校验 yes / no / unknown
+  anti_debug: "UNVERIFIED"            # 反调试 yes / no / unknown
+  anti_vm: "UNVERIFIED"               # 反虚拟机/沙箱 yes / no / unknown
+  code_signing: "UNVERIFIED"          # 数字签名 signed / unsigned / unknown
+  signature_subject: "UNVERIFIED"     # 签名主体（signed 时）
+  license_check_surface: "UNVERIFIED" # 原授权校验点的位置或形态
+
+# 可改性结论：这是保护探测的落点，直接决定 MAINTENANCE-MODE 的组件策略。
+modifiability:
+  # CAN_PATCH 可直接二进制补丁 / OVERLAY_ONLY 只能资源覆盖 /
+  # WRAPPER_ONLY 只能外壳包裹不能动核心 / REBUILD_REQUIRED 需要源码重建 / UNKNOWN 证据不足
+  verdict: "UNKNOWN"
+  reason: "UNVERIFIED"
+  # 能不能给最终成品加固（加壳/防篡改）。加壳目标自带壳时常冲突，需实测。
+  hardening_feasible: "UNKNOWN"       # yes / no / unknown
+  hardening_notes: "UNVERIFIED"
+
+evidence_refs: []                     # 指向 analysis/ 下的探测输出
+open_questions: []
+source_of_truth: "product-state/PROTECTION-PROFILE.yaml plus analysis/ evidence"

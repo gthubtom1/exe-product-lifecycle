@@ -1,0 +1,22 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+release_id: "UNVERIFIED"
+status: "DRAFT"
+components: []
+# Each component should include:
+# component_id, role, path, size, sha256, file_version, architecture,
+# upstream_sha256, maintained_sha256, original_signature, maintained_signature,
+# certificate_chain, public_key_fingerprint, dependencies, permissions,
+# required_for_start, verification, rollback_path
+signature_policy:
+  algorithm: "UNVERIFIED"
+  trusted_publishers: []
+  public_key_fingerprints: []
+  fail_closed_on_signature_error: true
+  key_rotation: "UNVERIFIED"
+  emergency_revoke: "UNVERIFIED"
+integrity_relations:
+  launcher_to_core: "UNVERIFIED"
+  package_to_components: "UNVERIFIED"
+  release_to_product_profile: "UNVERIFIED"
+evidence_refs: []

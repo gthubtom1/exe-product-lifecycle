@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "title": "Inventory outer and nested executable layers",
+  "summary": "When an installer or launcher contains a second executable layer, classify both layers independently before selecting a maintenance strategy.",
+  "category": "packaging",
+  "tags": ["nested-runtime", "installer-inventory"],
+  "evidence_level": "static_present",
+  "pattern": {
+    "applicability": ["An installer or launcher exposes at least one nested executable payload."],
+    "detection": ["Package inventory shows executable layers with different architecture or runtime indicators."],
+    "negative_indicators": ["The artifact is a single executable with no nested payload or sidecar runtime."],
+    "procedure": ["Hash and classify the outer entrypoint and each nested executable as separate components."],
+    "verification": ["The component inventory records architecture, runtime clues, role, and hash relation for every executable layer."],
+    "rollback": ["Discard the derived inventory and return to the preserved package without modifying the baseline."],
+    "failure_signals": ["Extraction changes the preserved package or a nested component cannot be tied to reproducible package evidence."],
+    "stop_conditions": ["Use normal PE analysis when no nested executable layer is confirmed."],
+    "limitations": ["Static inventory does not prove which nested component runs or how authorization is enforced."]
+  }
+}

@@ -1,0 +1,1 @@
+Fixture observation: a generic installer contains a nested executable whose runtime family differs from the outer launcher. Inventory both layers before selecting maintenance strategy.

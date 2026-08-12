@@ -1,0 +1,19 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+status: "PENDING"
+evidence_levels:
+  - "static_present"
+  - "entrypoint_present"
+  - "locally_exercised"
+  - "dynamic_success"
+  - "failure_observed"
+  - "not_observed"
+  - "not_applicable"
+entries: []
+# Each entry should include:
+# id, claim, evidence_mode, evidence_level, source, scope, confidence,
+# claim_limit, verification, reviewed_at
+rules:
+  static_is_not_runtime_proof: true
+  unknown_is_not_absence: true
+  complete_commands_and_outputs_required: true

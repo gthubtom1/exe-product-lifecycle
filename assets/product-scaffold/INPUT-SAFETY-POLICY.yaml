@@ -1,0 +1,29 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+status: "PENDING"
+accepted_input_types:
+  executable: true
+  installer: "UNVERIFIED"
+  markdown: true
+  archives: "UNVERIFIED"
+limits:
+  maximum_file_size: "UNVERIFIED"
+  maximum_archive_size: "UNVERIFIED"
+  maximum_expansion_ratio: "UNVERIFIED"
+  maximum_file_count: "UNVERIFIED"
+path_policy:
+  reject_absolute_paths: true
+  reject_parent_traversal: true
+  reject_duplicate_output_paths: true
+  case_collision_policy: "UNVERIFIED"
+unpack_policy:
+  destination: "product-state/artifacts/incoming"
+  use_temporary_directory: true
+  preserve_original: true
+  execute_during_intake: false
+failure_isolation:
+  quarantine_path: "product-state/artifacts/quarantine"
+  cleanup_command: "UNVERIFIED"
+  recovery_command: "UNVERIFIED"
+evidence_refs: []
+open_questions: []

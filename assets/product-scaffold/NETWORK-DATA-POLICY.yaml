@@ -1,0 +1,27 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+status: "PENDING"
+default_decision: "deny_unregistered_endpoint"
+endpoints: []
+# Each endpoint should include host, protocol, method, allowed_paths,
+# request_data_classes, response_data_classes, credential_type, consent,
+# retention, logging, offline_fallback, and verification.
+data_classes:
+  allowed: []
+  prohibited_from_logs:
+    - "admin_credentials"
+    - "private_keys"
+    - "complete_license_tokens"
+    - "raw_device_material"
+    - "complete_command_lines"
+credentials:
+  client_material: "UNVERIFIED"
+  admin_material: "never_in_client_or_product_state"
+logging:
+  policy: "UNVERIFIED"
+  redaction: "required"
+offline_fallback: "UNVERIFIED"
+user_consent: "UNVERIFIED"
+retention: "UNVERIFIED"
+evidence_refs: []
+open_questions: []

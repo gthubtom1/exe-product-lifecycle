@@ -1,0 +1,6 @@
+# Runtime lock the knowledge scripts create; never part of a release
+.knowledge-write.lock
+
+# Atomic-write residue
+*.tmp
+*.bak

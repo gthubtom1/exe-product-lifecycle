@@ -1,0 +1,29 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+status: "PENDING"
+selected_strategy: "UNKNOWN"
+# A product can use different strategies for different components. Do not
+# claim that an EXE-only input is fully rebuildable without evidence.
+allowed_strategies:
+  - "SOURCE_AVAILABLE"
+  - "RESOURCE_OVERLAY"
+  - "BINARY_PATCH_RECORD"
+  - "WRAPPER_LAUNCHER"
+  - "REBUILD_REQUIRED"
+  - "UNKNOWN"
+strategy_definitions:
+  SOURCE_AVAILABLE: "Own source, resources, build command, and reproducible output are recorded."
+  RESOURCE_OVERLAY: "Branding or resources are applied outside the core build and can be re-applied."
+  BINARY_PATCH_RECORD: "A reproducible, version-bound patch record exists for a binary component."
+  WRAPPER_LAUNCHER: "A launcher or adapter controls entry, authorization, update, and configuration around the core."
+  REBUILD_REQUIRED: "The change requires a source/build path that is not currently available."
+  UNKNOWN: "Evidence is insufficient; migration must not guess."
+components: []
+# Each component should include:
+# component_id, role, input_artifact, strategy, source_root, build_command,
+# patch_or_overlay_record, applicable_versions, verification, rollback, status
+limits:
+  rebuildable: "UNVERIFIED"
+  unsupported_changes: []
+  migration_conflicts: []
+source_of_truth: "product-state/MAINTENANCE-MODE.yaml plus component records"
