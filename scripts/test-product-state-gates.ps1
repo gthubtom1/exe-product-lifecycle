@@ -86,6 +86,12 @@ function Assert-Match {
     $wantShown = 'absent'
     if ($want) { $wantShown = 'present' }
     Add-Result -Name $Name -Passed ($found -eq $want) -Expected $wantShown -Actual $shown
+    # A gate that fails without showing what it saw is only debuggable on the machine it fails on.
+    # Capped so a runaway script cannot flood the log.
+    if ($found -ne $want) {
+        Write-Output ('       pattern: ' + $Pattern)
+        foreach ($line in @(($Text -split "`n") | Select-Object -First 40)) { Write-Output ('       | ' + $line.TrimEnd()) }
+    }
 }
 
 # G1 -- the happy path still passes, and now also answers "what next".
