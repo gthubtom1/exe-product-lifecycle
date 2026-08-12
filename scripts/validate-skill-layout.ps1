@@ -26,6 +26,15 @@ foreach ($script in @(Get-ChildItem -LiteralPath (Join-Path $root 'scripts') -Re
     $parseErrors = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
     foreach ($parseError in @($parseErrors)) { [void]$errors.Add("PowerShell parse error $($script.Name):$($parseError.Extent.StartLineNumber): $($parseError.Message)") }
+
+    # Windows PowerShell 5.1 decodes a BOM-less .ps1 with the machine's ANSI codepage, so a script
+    # holding Chinese text parses here (ACP 65001) and dies with "Missing ')'" on an ordinary
+    # English or GBK Windows. Parsing this file cannot catch it -- the host that reads it decides.
+    $bytes = [IO.File]::ReadAllBytes($script.FullName)
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    $hasNonAscii = $false
+    foreach ($byte in $bytes) { if ($byte -gt 127) { $hasNonAscii = $true; break } }
+    if ($hasNonAscii -and -not $hasBom) { [void]$errors.Add("non-ASCII script without UTF-8 BOM (breaks Windows PowerShell 5.1 on a non-UTF-8 codepage): scripts/$($script.Name)") }
 }
 
 foreach ($json in @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.json' | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' })) {

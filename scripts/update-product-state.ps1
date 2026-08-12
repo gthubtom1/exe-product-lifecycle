@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 
 <#
 Atomically move a product from one lifecycle status to the next.

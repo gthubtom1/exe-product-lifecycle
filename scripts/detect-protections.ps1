@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 
 <#
 Static protection assessment for a target binary.

@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 
 <#
 Two different questions, deliberately kept apart:

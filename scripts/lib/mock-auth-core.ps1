@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 
 # Mock of the authorization.v1 CLIENT contract for the EXE product lifecycle.
 #

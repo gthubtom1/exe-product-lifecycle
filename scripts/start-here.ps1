@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 
 <#
 The single entry point. Run this before doing anything else with a product folder.

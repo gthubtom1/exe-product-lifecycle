@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 
 <#
 Shared product-state primitives for init-product.ps1, register-input-bundle.ps1,

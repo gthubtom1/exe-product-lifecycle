@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 
 <#
 Negative-path regression for the protection assessment -- the verdict that decides whether a target

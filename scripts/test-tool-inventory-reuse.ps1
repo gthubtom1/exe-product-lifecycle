@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 <#
 Behaviour suite for discover-tools.ps1 reuse + atomic inventory write.
 Runs the same twelve scenarios against any copy of the script, so the landed version and a
