@@ -4,19 +4,18 @@
   "generated_at": "2026-08-12T05:56:24.7844652+00:00",
   "entries": [
     {
-      "experience_id": "exp-b9dd69e9c62c4d2da7e322999ebe822c",
+      "experience_id": "exp-554d160479c44676b6473a197b0a8104",
       "status": "candidate",
       "category": "tooling",
-      "title": "Windows 目录有两个名字：容器判断前必须归一化成长名",
+      "title": "单向镜像同步会删掉只在安装副本里的学习产物，必须显式保留",
       "tags": [
-        "windows",
-        "powershell",
-        "path-normalization",
-        "short-path",
+        "sync",
+        "mirror",
+        "data-loss",
         "portability"
       ],
-      "path": "knowledge/candidates/exp-b9dd69e9c62c4d2da7e322999ebe822c.json",
-      "sha256": "2B6C188131E80CA342A8BE3FED9D282372AD47346296720F353A2B78C1DFEFA7",
+      "path": "knowledge/candidates/exp-554d160479c44676b6473a197b0a8104.json",
+      "sha256": "48E9FF3290C652E8A2A5857CEC8F83DBDDE80461D5B4BC812F0AF1626056C4E3",
       "updated_at": "2026-08-12T05:56:24.7844652+00:00"
     },
     {
@@ -36,18 +35,19 @@
       "updated_at": "2026-08-12T05:56:24.7844652+00:00"
     },
     {
-      "experience_id": "exp-554d160479c44676b6473a197b0a8104",
+      "experience_id": "exp-b9dd69e9c62c4d2da7e322999ebe822c",
       "status": "candidate",
       "category": "tooling",
-      "title": "单向镜像同步会删掉只在安装副本里的学习产物，必须显式保留",
+      "title": "Windows 目录有两个名字：容器判断前必须归一化成长名",
       "tags": [
-        "sync",
-        "mirror",
-        "data-loss",
+        "windows",
+        "powershell",
+        "path-normalization",
+        "short-path",
         "portability"
       ],
-      "path": "knowledge/candidates/exp-554d160479c44676b6473a197b0a8104.json",
-      "sha256": "48E9FF3290C652E8A2A5857CEC8F83DBDDE80461D5B4BC812F0AF1626056C4E3",
+      "path": "knowledge/candidates/exp-b9dd69e9c62c4d2da7e322999ebe822c.json",
+      "sha256": "2B6C188131E80CA342A8BE3FED9D282372AD47346296720F353A2B78C1DFEFA7",
       "updated_at": "2026-08-12T05:56:24.7844652+00:00"
     }
   ]

@@ -371,10 +371,16 @@ function Update-KnowledgeIndex {
             })
         }
     }
-    $sorted = @($entries | Sort-Object experience_id)
+    # Sort-Object <bareword> sorts by a *property*, but these entries are OrderedDictionaries whose
+    # keys are dictionary entries, not properties: Windows PowerShell 5.1 cannot see experience_id
+    # and leaves them in an arbitrary order, while PowerShell 7 sorts ascending. The committed index
+    # (written on 5.1) and the regenerated one (pwsh 7 lane) then disagreed on entry order and
+    # "generated files are committed" failed. An explicit expression reads the value the same way on
+    # both hosts.
+    $sorted = @($entries | Sort-Object -Property @{ Expression = { [string]$_.experience_id } })
     $stableTime = '1970-01-01T00:00:00.0000000+00:00'
     if ($sorted.Count -gt 0) {
-        $stableTime = [string](@($sorted | Sort-Object updated_at -Descending | Select-Object -First 1)[0].updated_at)
+        $stableTime = [string](@($sorted | Sort-Object -Property @{ Expression = { [string]$_.updated_at } } -Descending | Select-Object -First 1)[0].updated_at)
     }
     $index = [ordered]@{
         schema_version = 1
