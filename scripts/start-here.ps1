@@ -116,7 +116,14 @@ else { $mode = 'resume' }
 $steps = New-Object System.Collections.Generic.List[string]
 $quotedRoot = '"' + $root + '"'
 
-Write-Output '=== EXE 产品生命周期 · 现在该做什么 ==='
+# The banner must match the product's track: printing an "EXE" title over a source-reuse product is
+# the same track-mismatch the routing below already avoids -- only the title lagged. Read the track
+# early (only when a product archive exists) so banner and routing agree; bootstrap (no archive yet)
+# keeps the neutral EXE-first default.
+$bannerTrack = ''
+if ($hasState) { $bannerTrack = (Get-YamlScalar -Text (Read-TextFileSafe -Path (Join-Path $stateRoot 'STATE.yaml')) -Key 'track').Trim() }
+if ($bannerTrack -eq 'source') { Write-Output '=== 源码复用二开 · 产品生命周期 · 现在该做什么 ===' }
+else { Write-Output '=== EXE 产品生命周期 · 现在该做什么 ===' }
 Write-Output ("产品目录: " + $root)
 Write-Output ("模式: " + $mode)
 
@@ -210,6 +217,57 @@ else {
     if (@($readiness.PendingForNext | Where-Object { $_.Detail -like '*PROTECTION-PROFILE*' }).Count -gt 0) {
         Write-Output '     先探测目标的保护机制（加壳/自校验/反调试/签名），它决定能不能改、能不能加固:'
         Write-Output ('     powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $scriptDir 'detect-protections.ps1') + '" -ProductRoot ' + $quotedRoot)
+    }
+    if (@($readiness.PendingForNext | Where-Object { $_.Detail -like '*ANALYSIS-FINDINGS*' }).Count -gt 0) {
+        # The six reverse-engineering categories each have to end in done/not_applicable/blocked before
+        # ANALYZED can be written, and that gate pushes. When a category genuinely ran its tool and got
+        # nothing back, the cheapest way out is not_applicable -- which is exactly the "quietly fill the
+        # category -> drift into a shell -> claim done" failure gap-classify.ps1 was built to stop. The
+        # classifier only helps if the agent meets it at that moment, so the escape hatch is printed
+        # beside the requirement that creates the pressure. Stating it in prose instead is what made the
+        # ordering rules move into this script in the first place.
+        Write-Output '     六类里如果有哪一类你真的跑过工具却产不出证据: 不要填 not_applicable、也不要留空。用下面这条把它记成有证据绑定的 blocked，它会判定这是缺工具 / 输入问题 / 死路，并写进 STATE.yaml 的 blocking_items:'
+        Write-Output ('     powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $scriptDir 'gap-classify.ps1') + '" -ProductRoot ' + $quotedRoot + ' -CapabilityId <能力id，例 unpack.pe.upx> -Technique <static_structure|static_strings|static_resources|disassembly|dynamic_behavior|unpacking> -FailureCommand "<你真跑过的那条命令>" -FailureOutputPath <product-state/ 下保存这条命令输出的文件>')
+        Write-Output '     口说不算证据: 失败输出必须是 product-state/ 下真实存在且非空的文件，否则它拒绝写入。它也要求工具清单已经建好（先跑上面那条 discover-tools），因为「从没查过」不等于「查过没有」。'
+        Write-Output '     真的什么都做不成时，blocked 就是合法结局: 如实停在这里比编一个 not_applicable 继续往前走更好，后面的门会拦住未解决的 blocking_items。'
+
+        # The other half of the same moment. gap-classify records the capability the machine could not
+        # deliver; learn-tool.ps1 records the tool that finally did. It is the only writer of the machine-local
+        # learned layer, and it shipped with no callers at all -- the single mention anywhere in the tree was a
+        # comment inside a test -- so an agent following SKILL.md never arrived at it and every product
+        # re-searched for tools this machine had already found once. Printed beside the pending analysis
+        # categories rather than stated in SKILL.md, for the reason this whole script exists: prose gets skimmed.
+        #
+        # Two conditions, both load-bearing. The inventory must exist, because "never ran discovery" is not
+        # "discovery found nothing" -- the same distinction gap-classify enforces one step above. And at least
+        # one role must actually be empty, because with every role filled there is nothing to learn and this
+        # would just be a banner; a hint that prints on every run is one the agent stops reading.
+        $inventoryJson = Join-Path $stateRoot 'tooling\TOOL-INVENTORY.json'
+        if (Test-Path -LiteralPath $inventoryJson -PathType Leaf) {
+            $missingRoles = New-Object System.Collections.Generic.List[string]
+            try {
+                $inventory = Get-Content -Raw -Encoding UTF8 -LiteralPath $inventoryJson | ConvertFrom-Json
+                foreach ($row in @($inventory.tools)) {
+                    if ($null -eq $row) { continue }
+                    $rowProps = $row.PSObject.Properties
+                    if ($null -eq $rowProps['tool_id']) { continue }
+                    # A row with no available field predates it. Treating that as a gap would invent an
+                    # errand out of an old snapshot, so only an explicit false counts.
+                    if ($null -ne $rowProps['available'] -and -not $row.available) { [void]$missingRoles.Add([string]$row.tool_id) }
+                }
+            }
+            catch {
+                # A malformed inventory is discover-tools' error to report. This script is read-only and
+                # always safe to re-run; a second error about the same file would only obscure the first.
+                $missingRoles.Clear()
+            }
+            if ($missingRoles.Count -gt 0) {
+                Write-Output ('     本机有 ' + $missingRoles.Count + ' 个角色还没有工具（例 ' + $missingRoles[0] + '）。如果你为其中哪一个找到并装上了工具、而且已经用它把活干完了，收尾补这一条，把它记进本机清单，否则下一个产品还要从头再找一遍:')
+                Write-Output ('     powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $scriptDir 'learn-tool.ps1') + '" -RoleId ' + $missingRoles[0] + ' -Name <你装上的可执行文件名，例 innoextract.exe> -SourceUrl <你从哪儿拿到它的> -InstallRoute <winget|manual|already_present>')
+                Write-Output '     顺序不能反: 先装、先用它把活真的干完，最后才记。记录是事后的副作用不是前置条件，所以这条命令即使失败也不会让已经完成的工作作废，它会把没记上的那条原样打出来让你手工补。'
+                Write-Output '     它还能把「这个能力归这个角色」写进桥表，但那会改变本机算不算有能力做某事，所以必须带 -BridgeCapability <能力id> -BridgeApproved，并且只能并进用户决定装不装的那一次点头里，不要为它新开一次审批。'
+            }
+        }
     }
     if (-not [string]::IsNullOrWhiteSpace($readiness.NextStatus)) {
         $stepNumber++

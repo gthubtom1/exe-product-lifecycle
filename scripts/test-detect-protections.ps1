@@ -139,6 +139,73 @@ Assert-Match -Name 'V14-reason-cites-anti-debug' -Text ([string]$overSigned.Reas
 Assert-Equal -Name 'V15-wrapper-hardening-no' -Expected 'no' -Actual ([string](
     Get-ModifiabilityVerdict -Packer 'UPX').Hardening)
 
+# --- Q1: containers ------------------------------------------------------------------------------
+# This block is the one that must not be allowed to rot. Every other misroute is loud or cheap: this
+# one ships. Rebrand an installer and the artifact installs, launches, and satisfies every evidence
+# gate while the real application is byte-for-byte untouched -- nothing anywhere else goes red.
+
+# V16 -- THE kill-test for the container branch. Installer names arrive on DIE's Protector/Packer
+# line, so before Q1 existed this exact input read as WRAPPER_ONLY. Delete the CONTAINER branch, or
+# move it below the packed test, and this goes red.
+Assert-Verdict -Name 'V16-inno-is-container-not-wrapper' -ExpectedVerdict 'CONTAINER' -Result (
+    Get-ModifiabilityVerdict -Packer 'Inno Setup' -AntiDebug 'no')
+Assert-Verdict -Name 'V17-nsis-is-container' -ExpectedVerdict 'CONTAINER' -Result (
+    Get-ModifiabilityVerdict -Packer 'Nullsoft Scriptable Install System (NSIS)' -AntiDebug 'no')
+Assert-Verdict -Name 'V18-msi-extension-is-container' -ExpectedVerdict 'CONTAINER' -Result (
+    Get-ModifiabilityVerdict -TargetName 'C:\x\setup.msi' -Packer 'none-detected' -AntiDebug 'no')
+
+# V18b -- the branch must survive a caller that never passes -ContainerKind at all. Make the
+# parameter default to 'none' instead of deriving it and this goes red, which is the point: a
+# forgotten argument must not be able to silently disable the only quietly-failing branch.
+Assert-Verdict -Name 'V18b-derives-container-when-arg-omitted' -ExpectedVerdict 'CONTAINER' -Result (
+    Get-ModifiabilityVerdict -Packer 'Inno Setup 6.2.2' -AntiDebug 'no' -CodeSigning 'signed')
+
+# V19 -- container outranks a real packer signature on the same target. An installer that is itself
+# UPX-compressed is still an installer: unpacking it in place would leave you holding the installer.
+Assert-Verdict -Name 'V19-container-beats-packer' -ExpectedVerdict 'CONTAINER' -Result (
+    Get-ModifiabilityVerdict -ContainerKind 'inno' -Packer 'UPX(3.96)' -EntropyTotal 7.9 -StatusSaysPacked $true)
+
+# V20 -- a container is re-entrant, not terminal: open it and ask Q1 again about what came out.
+$v20 = Get-ModifiabilityVerdict -Packer 'Inno Setup' -AntiDebug 'no'
+Assert-Equal -Name 'V20-container-reenter-true' -Expected 'True' -Actual ([string]$v20.ReEnter)
+Assert-Equal -Name 'V20-container-kind-echoed' -Expected 'inno' -Actual ([string]$v20.ContainerKind)
+
+# V21 -- Inno is the only container with a genuine dead end (innoextract 1.9 is the last release, so
+# "install a newer one" is not a fix). NSIS must NOT inherit it, or every container reads as hopeless.
+Assert-Equal -Name 'V21-inno-dead-end-recorded' -Expected 'inno-data-version-above-innoextract-1.9-ceiling' -Actual ([string]$v20.DeadEndCondition)
+Assert-Equal -Name 'V21-nsis-has-no-dead-end' -Expected '' -Actual ([string](
+    Get-ModifiabilityVerdict -Packer 'NSIS' -AntiDebug 'no').DeadEndCondition)
+
+# V22 -- Get-ContainerKind must not over-classify: a real packer is not a container. Loosen the
+# patterns until UPX matches and every packed target gets routed away from unpacking.
+Assert-Equal -Name 'V22-upx-is-not-a-container' -Expected 'none' -Actual (Get-ContainerKind -Packer 'UPX(3.96)')
+Assert-Equal -Name 'V22-themida-is-not-a-container' -Expected 'none' -Actual (Get-ContainerKind -Packer 'Themida/WinLicense')
+Assert-Equal -Name 'V22-empty-is-none' -Expected 'none' -Actual (Get-ContainerKind -Packer '')
+
+# --- re-entry and dead ends on the existing branches ----------------------------------------------
+
+# V23 -- UPX is unpackable, so WRAPPER_ONLY here means "unpack, then re-route", not "stop".
+Assert-Equal -Name 'V23-upx-wrapper-reenter-true' -Expected 'True' -Actual ([string](
+    Get-ModifiabilityVerdict -Packer 'UPX(3.96)' -AntiDebug 'no').ReEnter)
+
+# V24 -- a commercial protector is terminal for re-entry and carries the dead-end judgement. The
+# condition is deliberately requirement-coupled: judging by the shell alone would kill a product
+# that a Launcher-only delivery could still have shipped.
+$v24 = Get-ModifiabilityVerdict -Packer 'Themida' -AntiDebug 'no'
+Assert-Equal -Name 'V24-themida-reenter-false' -Expected 'False' -Actual ([string]$v24.ReEnter)
+Assert-Equal -Name 'V24-themida-dead-end-recorded' -Expected 'commercial-protector-and-core-logic-change-required' -Actual ([string]$v24.DeadEndCondition)
+
+# V25 -- CAN_PATCH is terminal and has no dead end: a failed smoke edit downgrades to OVERLAY_ONLY,
+# it does not stop the job. Writing a dead-end string here would turn a detour into an abandonment.
+$v25 = Get-ModifiabilityVerdict -Packer 'none-detected' -AntiDebug 'no'
+Assert-Equal -Name 'V25-can-patch-reenter-false' -Expected 'False' -Actual ([string]$v25.ReEnter)
+Assert-Equal -Name 'V25-can-patch-no-dead-end' -Expected '' -Actual ([string]$v25.DeadEndCondition)
+
+# V26 -- CAN_PATCH must tell the caller to smoke-test first. The self-check detector never returns
+# 'no' and knows only five API names, so an inlined CRC lands here; the early minimal edit is the
+# only thing standing between that and a full round of customisation thrown away.
+Assert-Match -Name 'V26-can-patch-demands-smoke-run' -Text ([string]$v25.Reason) -Pattern '最小改动'
+
 # --- end-to-end: the real script still extracts signals, applies the tree, and writes the profile.
 # Deliberately runs without DIE (none is on CI), so it exercises the string-scan fallback path.
 
@@ -189,6 +256,33 @@ Add-Result -Name 'E4-default-no-stack-trace' -Passed (-not $run.HasStackTrace) -
 $null = Invoke-Script -Name 'detect-protections.ps1' -ScriptArgs @('-ProductRoot', $e4, '-Force', '-AllowUnsignedDiscoveredTools')
 $e4ProfileAllow = Get-Content -Raw -Encoding UTF8 -LiteralPath $e4ProfilePath
 Assert-Match -Name 'E4-allow-flag-runs-unsigned-discovered' -Text $e4ProfileAllow -Pattern '已默认跳过磁盘扫描发现' -Absent
+
+# E5 -- the routing fields have to reach the FILE, not just the returned object. Deleting the three
+# container_kind / re_enter / dead_end_condition writes from detect-protections.ps1 left all 45 cases
+# green, because every assertion about them went through the in-memory function. Downstream nobody
+# reads that object: the layer gate parses the profile, and so does the next person. A verdict whose
+# re-entry and stop condition never got written is a verdict that silently became terminal.
+Assert-Match -Name 'E5-profile-carries-container-kind' -Text $e2Profile -Pattern 'container_kind:\s*"none"'
+Assert-Match -Name 'E5-profile-carries-re-enter' -Text $e2Profile -Pattern 're_enter:\s*"no"'
+Assert-Match -Name 'E5-profile-carries-dead-end' -Text $e2Profile -Pattern 'dead_end_condition:\s*"whole-image-self-check-with-vendor-signature"'
+
+# E6 -- end-to-end twin of V16, covering the one misroute in the table that ships successfully.
+# V16 pins the pure function; this pins the wiring. Stop passing -TargetName from
+# detect-protections.ps1 and V16 stays green while an installer quietly routes as patchable.
+$e5 = Join-Path $FixtureRoot 'e5-container'
+New-Item -ItemType Directory -Force -Path $e5 | Out-Null
+$e5Core = Join-Path $e5 'setup.msi'
+[IO.File]::WriteAllText($e5Core, 'MZ inert installer fixture, never executed', [Text.Encoding]::ASCII)
+$null = Invoke-Script -Name 'init-product.ps1' -ScriptArgs @('-ProductRoot', $e5, '-ProductId', 'protect-e5', '-CorePath', $e5Core)
+$run = Invoke-Script -Name 'detect-protections.ps1' -ScriptArgs @('-ProductRoot', $e5)
+Add-Result -Name 'E6-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
+$e5Profile = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $e5 'product-state\PROTECTION-PROFILE.yaml')
+Assert-Match -Name 'E6-installer-routed-as-container' -Text $e5Profile -Pattern 'verdict:\s*"CONTAINER"'
+Assert-Match -Name 'E6-container-kind-written' -Text $e5Profile -Pattern 'container_kind:\s*"msi"'
+Assert-Match -Name 'E6-container-is-re-enterable' -Text $e5Profile -Pattern 're_enter:\s*"yes"'
+# The profile is where the operator learns what to do next; "CONTAINER" alone does not say
+# "open it and ask again", nor that touching the installer's own resources is the trap.
+Assert-Match -Name 'E6-container-note-names-next-step' -Text $e5Profile -Pattern '先解开容器'
 
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''

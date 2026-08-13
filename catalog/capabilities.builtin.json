@@ -1,0 +1,154 @@
+{
+    "schema_version":  1,
+    "layer":  "builtin",
+    "capabilities":  [
+                         {
+                             "id":  "triage.pe",
+                             "roles":  [
+                                           "pe-triage"
+                                       ]
+                         },
+                         {
+                             "id":  "inspect.pe.structure",
+                             "roles":  [
+                                           "pe-structure"
+                                       ]
+                         },
+                         {
+                             "id":  "inspect.resources",
+                             "roles":  [
+                                           "resource-edit"
+                                       ]
+                         },
+                         {
+                             "id":  "disassemble.pe.native",
+                             "roles":  [
+                                           "native-static"
+                                       ]
+                         },
+                         {
+                             "id":  "decompile.pe.native",
+                             "roles":  [
+                                           "native-static"
+                                       ]
+                         },
+                         {
+                             "id":  "decompile.dotnet",
+                             "roles":  [
+                                           "dotnet-static"
+                                       ]
+                         },
+                         {
+                             "id":  "deobfuscate.dotnet",
+                             "roles":  [
+                                           "managed-cleanup",
+                                           "dotnet-static"
+                                       ]
+                         },
+                         {
+                             "id":  "unpack.pe.upx",
+                             "roles":  [
+                                           "package-inspect"
+                                       ]
+                         },
+                         {
+                             "id":  "unpack.pe.generic",
+                             "roles":  [
+                                           "package-inspect",
+                                           "debugger"
+                                       ]
+                         },
+                         {
+                             "id":  "debug.dynamic",
+                             "roles":  [
+                                           "debugger"
+                                       ]
+                         },
+                         {
+                             "id":  "observe.system",
+                             "roles":  [
+                                           "system-observe"
+                                       ]
+                         },
+                         {
+                             "id":  "instrument.runtime",
+                             "roles":  [
+                                           "runtime-instrumentation"
+                                       ]
+                         },
+                         {
+                             "id":  "observe.network",
+                             "roles":  [
+                                           "network-observe"
+                                       ]
+                         },
+                         {
+                             "id":  "diff.binary",
+                             "roles":  [
+                                           "binary-diff"
+                                       ]
+                         },
+                         {
+                             "id":  "build.dotnet",
+                             "roles":  [
+                                           "language-dotnet",
+                                           "build"
+                                       ]
+                         },
+                         {
+                             "id":  "build.java",
+                             "roles":  [
+                                           "language-java"
+                                       ]
+                         },
+                         {
+                             "id":  "build.python",
+                             "roles":  [
+                                           "language-python"
+                                       ]
+                         },
+                         {
+                             "id":  "build.node",
+                             "roles":  [
+                                           "language-node"
+                                       ]
+                         },
+                         {
+                             "id":  "build.go",
+                             "roles":  [
+                                           "language-go"
+                                       ]
+                         },
+                         {
+                             "id":  "build.rust",
+                             "roles":  [
+                                           "language-rust"
+                                       ]
+                         },
+                         {
+                             "id":  "build.native",
+                             "roles":  [
+                                           "language-native",
+                                           "build"
+                                       ]
+                         },
+                         {
+                             "id":  "build.delphi",
+                             "roles":  [
+                                           "language-delphi"
+                                       ]
+                         },
+                         {
+                             "id":  "build.qt",
+                             "roles":  [
+                                           "language-qt"
+                                       ]
+                         },
+                         {
+                             "id":  "build.scripting",
+                             "roles":  [
+                                           "language-scripting"
+                                       ]
+                         }
+                     ]
+}

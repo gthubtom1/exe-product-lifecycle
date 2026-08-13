@@ -1,0 +1,145 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "capability-recipe.schema.json",
+  "title": "Tool capability recipe (self-evolution capabilities/ library, DECLARED plane)",
+  "description": "A recipe for acquiring + health-checking ONE analysis/build tool capability. This library is fully independent of the experience knowledge base: it has its own status machine and validator and shares only library-level primitives (ConvertTo-CanonicalJson / Get-StringSha256 / Get-PublicContentFindings). TWO-PLANE STORAGE: this schema describes the DECLARED plane (capabilities/recipes/, committed) which records WHAT WE APPROVED and accepts only status proposed|approved. Runtime facts (installed/verified/quarantined, measured hashes, selftest evidence, install root) live in the machine-local runtime plane and are never committed -- so a committed file can never be edited into a usable state. A recipe records how a tool is (a) fetched as a single hashable artifact, extracted inertly (never running an installer/in-package script), byte-bound by hash and re-hashed at use time, and (b) health-checked by a closed machine predicate with a mandatory negative sample. A green selftest only proves the tool is HEALTHY/available -- never that a target's original behaviour was reproduced; per-target ANALYSIS-FINDINGS / RUN-EVIDENCE stay mandatory.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_type",
+    "tool_capability_id",
+    "status",
+    "target_strength",
+    "acquire",
+    "verify",
+    "payload_sha256",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "record_type": { "const": "capability_recipe" },
+    "tool_capability_id": {
+      "type": "string",
+      "description": "Stable id of the tool capability, e.g. unpack.pe.upx / decompile.dotnet / build.rust. Named tool_capability_id (not capability) so it never collides with the source track's product CAPABILITY-MAP.",
+      "pattern": "^[a-z0-9]+(\\.[a-z0-9]+)+$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "approved"],
+      "description": "Declared-plane status only. proposed=recorded, not human-approved; approved=approved out-of-band against a specific payload (see approval). installed/verified/quarantined are RUNTIME facts and are refused in this plane by the validator -- they live in the machine-local runtime plane."
+    },
+    "target_strength": {
+      "type": "string",
+      "enum": ["UNVERIFIED"],
+      "description": "Whether the recipe implies a target can be reproduced. A tool-health selftest can only ever yield UNVERIFIED, so UNVERIFIED is the only accepted value and a target-verified badge cannot be set at all. Per-target reproduction still requires ANALYSIS-FINDINGS / RUN-EVIDENCE. Covered by payload_sha256 so the claim cannot be raised after approval.",
+      "default": "UNVERIFIED"
+    },
+    "acquire": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How the single hashable artifact is fetched. NEVER an installer/winget/git/free command -- those are excluded from the auto path (manual out-of-band only). Extraction is done ONLY by our own code (Expand-Archive / System.IO.Compression); no in-package script is executed.",
+      "required": ["source_url", "pinned_version", "artifact_type", "expected_sha256", "hash_source", "entry_relpath", "entry_sha256", "unsigned_ack"],
+      "properties": {
+        "source_url": {
+          "type": "string",
+          "description": "HTTPS official source. No userinfo, no ?token/?key, no embedded absolute path.",
+          "pattern": "^https://[^@?#]+$"
+        },
+        "pinned_version": { "type": "string", "minLength": 1 },
+        "artifact_type": { "type": "string", "enum": ["zip", "exe"] },
+        "expected_sha256": {
+          "type": "string",
+          "description": "SHA-256 of the DOWNLOADED artifact itself (the zip or the exe), pinned by us -- never trusted from a platform digest field.",
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        },
+        "hash_source": {
+          "type": "string",
+          "enum": ["publisher_published", "gpg_or_sigstore", "platform_digest", "tofu_first_measured"],
+          "description": "Provenance of expected_sha256, strongest first. tofu_first_measured means trust-on-first-use: we measured it ourselves once with nothing to compare against. Without this field a TOFU hash is byte-identical in the library to a publisher-published one, and the phase-C batch pre-approval would silently grant it the same trust. tofu_first_measured may NEVER ride the auto-approval path (per-entry human approval only) and may not be combined with a signer. Covered by payload_sha256 so the tier cannot be silently upgraded."
+        },
+        "signer": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Authenticode signer expectation when the artifact is validly signed. Mutually exclusive with unsigned_ack=true: declaring both is a contradictory provenance claim and is refused. A bare subject string is not enough -- phase C needs a machine-checkable match policy, and an untimestamped signature on a pinned old version is a time bomb that must be visible.",
+          "required": ["match_policy", "status", "timestamped"],
+          "properties": {
+            "subject_exact": { "type": "string", "description": "Full expected subject, required when match_policy=subject_exact." },
+            "org": { "type": "string", "description": "Expected organisation, required when match_policy=org. Use this rather than subject_exact where a publisher legitimately signs under several subjects." },
+            "thumbprint": { "type": "string", "pattern": "^([A-Fa-f0-9]{40,64})?$", "description": "Certificate thumbprint, required when match_policy=thumbprint." },
+            "match_policy": { "type": "string", "enum": ["subject_exact", "org", "thumbprint"] },
+            "status": {
+              "type": "string",
+              "enum": ["Valid", "UnknownError", "NotSigned", "HashMismatch", "NotTrusted", "NotSupportedFileFormat", "Incompatible"],
+              "description": "Expected Get-AuthenticodeSignature status, so the phase-C check is a machine comparison rather than a string guess."
+            },
+            "timestamped": { "type": "boolean", "description": "Whether the signature carries a trusted countersignature timestamp. False means the pinned version stops validating once the signing cert expires." }
+          }
+        },
+        "unsigned_ack": {
+          "type": "boolean",
+          "description": "True iff the tool is legitimately unsigned (e.g. diec/go/cargo/rustc). When true, unsigned_reason is required, signer must be absent, and the pinned hashes are the integrity anchor in place of a signature."
+        },
+        "unsigned_reason": { "type": "string" },
+        "entry_relpath": {
+          "type": "string",
+          "description": "Relative path, inside the extracted artifact, of the exe actually invoked (for artifact_type=exe this is the artifact itself). No absolute path, no drive letter, no parent traversal.",
+          "pattern": "^[^:\\\\]"
+        },
+        "entry_sha256": {
+          "type": "string",
+          "description": "SHA-256 of the entry exe after inert extraction. Re-hashed before every invocation (anti-TOCTOU); a mismatch quarantines the recipe.",
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        }
+      }
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Tool-health selftest: a CLOSED machine predicate judged by the script (never by an LLM), with a mandatory negative sample. expected_output_assert is written from a known-answer fixture, never back-filled from the tool's live output. Both samples must exist under fixtures/capabilities/ and hash to the recorded value -- the validator checks the files on disk.",
+      "required": ["invoke_command", "expected_output_assert", "selftest_sample", "selftest_sample_sha256", "negative_sample", "negative_sample_sha256"],
+      "properties": {
+        "invoke_command": {
+          "type": "string",
+          "description": "How the selftest runs the tool. Relative/env-var only; no absolute path.",
+          "minLength": 1
+        },
+        "expected_output_assert": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Closed predicate over the tool output on the positive sample.",
+          "required": ["contains_all", "not_contains"],
+          "properties": {
+            "contains_all": { "type": "array", "items": { "type": "string" } },
+            "not_contains": { "type": "array", "items": { "type": "string" } },
+            "output_sha256": { "type": "string", "pattern": "^([A-Fa-f0-9]{64})?$" }
+          }
+        },
+        "selftest_sample": { "type": "string", "minLength": 1, "description": "Relative path, under fixtures/capabilities/, to a legal, publicly-shareable, known-answer positive fixture. Must exist and match selftest_sample_sha256." },
+        "selftest_sample_sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+        "negative_sample": { "type": "string", "minLength": 1, "description": "A sample under fixtures/capabilities/ that the tool MUST reject / return empty on -- guards against a stub that always returns the same answer. Must exist and match negative_sample_sha256." },
+        "negative_sample_sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Records WHICH payload a human approved. Required at status=approved, forbidden at status=proposed. approval.payload_sha256 must equal the recomputed payload hash, so changing any safety field invalidates the approval even if the editor dutifully refreshes payload_sha256 -- without this block payload_sha256 is only a checksum, not an approval anchor.",
+      "required": ["approved_by", "approved_at", "payload_sha256"],
+      "properties": {
+        "approved_by": { "type": "string", "minLength": 1 },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "payload_sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+      }
+    },
+    "payload_sha256": {
+      "type": "string",
+      "description": "Integrity hash covering EVERY safety-critical field (tool_capability_id, target_strength, acquire.source_url/pinned_version/artifact_type/expected_sha256/hash_source/signer/unsigned_ack/entry_relpath/entry_sha256, verify.invoke_command/expected_output_assert + the sample hashes). status is deliberately excluded because it advances legitimately; it is constrained instead by the plane rule and by approval.",
+      "pattern": "^[A-Fa-f0-9]{64}$"
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "notes": { "type": "string" }
+  }
+}

@@ -477,6 +477,65 @@ Assert-Match -Name 'AN1-missing-category-caught' -Text $run.Text -Pattern '\(dis
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'AN2-category-settled-clears' -Text $run.Text -Pattern '\(disassembly\)' -Absent
 
+# LG -- 分层门：六类门数格子勾没勾，不看格子是在哪个东西上勾的。这一组盯的是全表唯一一个**误判后
+# 会安静成功**的方向：把安装包当产品改，产物能装能跑、证据门全过，而真正的应用一个字节没动。
+# 删掉 validate-product-state.ps1 的 layer gate，LG1/LG2/LG6 变红；让它恒firing，LG3/LG4/LG5 变红。
+function Set-RoutingVerdict {
+    param([string]$Root, [string]$Verdict)
+    $pp = Join-Path $Root 'product-state\PROTECTION-PROFILE.yaml'
+    $t = Get-Content -Raw -Encoding UTF8 -LiteralPath $pp
+    $t = [regex]::Replace($t, '(?m)^(\s+verdict:).*$', ('${1} "' + $Verdict + '"'))
+    [IO.File]::WriteAllText($pp, $t, (New-Object Text.UTF8Encoding($false)))
+}
+function Set-LayerFindings {
+    param([string]$Root, [string]$Body)
+    $p = Join-Path $Root 'product-state\analysis\ANALYSIS-FINDINGS.yaml'
+    $t = Get-Content -Raw -Encoding UTF8 -LiteralPath $p
+    [IO.File]::WriteAllText($p, ([regex]::Replace($t, '(?s)findings:.*?(?=\r?\nsource_of_truth:)', $Body)), (New-Object Text.UTF8Encoding($false)))
+}
+
+$root = New-Fixture -Name 'lg-observed-layer'
+Set-RoutingVerdict -Root $root -Verdict 'CONTAINER'
+
+# LG1 -- THE kill-test. Router says it is still an installer, yet a finding claims to be on the
+# payload. That finding cannot exist yet, and letting it through is how an installer gets rebranded
+# and shipped as if it were the product.
+Set-LayerFindings -Root $root -Body "findings:`n  - id: f1`n    technique: static_resources`n    observed_layer: payload`n    summary: `"icon and version info`""
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'LG1-payload-finding-under-container-caught' -Text $run.Text -Pattern 'observed_layer=payload 的发现'
+
+# LG2 -- the refusal must name the way out. Without it the cheapest fix for someone who legitimately
+# unpacked is to relabel the finding -- the exact forgery this gate exists to prevent. Strip the
+# re-route sentence from the error text and this goes red while LG1 stays green.
+Assert-Match -Name 'LG2-error-names-the-exit' -Text $run.Text -Pattern '重新跑 detect-protections\.ps1 重新路由'
+
+# LG3 -- relabelling to the layer actually observed clears it. Mutation guard: a gate that fires on
+# everything gets switched off by the next person.
+Set-LayerFindings -Root $root -Body "findings:`n  - id: f1`n    technique: static_resources`n    observed_layer: container`n    summary: `"installer wizard icon`""
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'LG3-container-labelled-finding-clears' -Text $run.Text -Pattern 'observed_layer=payload 的发现' -Absent
+
+# LG4 -- 第三态。存量档案没有这个字段，两个直觉默认都是错的：当 payload 是静默假过，当不合格是假警。
+# 缺失必须既不判过也不判不过，而且必须在总结行上看得见。把 default 分支改成计入 payload，LG4-not-failed
+# 变红；把 unknown 从总结行拿掉，LG4-on-summary 变红。
+Set-LayerFindings -Root $root -Body "findings:`n  - id: f1`n    technique: static_resources`n    summary: `"legacy finding with no layer field`""
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'LG4-missing-layer-not-failed' -Text $run.Text -Pattern 'observed_layer=payload 的发现' -Absent
+Assert-Match -Name 'LG4-unknown-visible-on-summary' -Text $run.Text -Pattern 'LAYER-COVERAGE:.*unknown=1'
+
+# LG5 -- once the payload really is visible the same finding is legal. Pins that the gate keys off
+# the routing verdict and not off the word "payload".
+Set-RoutingVerdict -Root $root -Verdict 'CAN_PATCH'
+Set-LayerFindings -Root $root -Body "findings:`n  - id: f1`n    technique: static_resources`n    observed_layer: payload`n    summary: `"real product icon`""
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'LG5-payload-legal-once-routed-through' -Text $run.Text -Pattern 'observed_layer=payload 的发现' -Absent
+
+# LG6 -- the packed case is the same shape as the container case: on a shell you can produce four
+# categories of perfectly real findings that all describe the shell.
+Set-RoutingVerdict -Root $root -Verdict 'WRAPPER_ONLY'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'LG6-payload-finding-under-wrapper-caught' -Text $run.Text -Pattern 'observed_layer=payload 的发现'
+
 # CU -- 脱壳是动作不是探测 (opening c). detect-protections only *detects* packing; nothing tied that detection
 # to the unpacking decision, so a packed target (WRAPPER_ONLY / high entropy / named packer) could still
 # mark unpacking: not_applicable and pass ANALYZED. unpacking_consistent_with_protection now forces a packed
@@ -955,9 +1014,37 @@ else {
 # person hitting that needs the clone command, not a PowerShell stack trace.
 $pk = Join-Path $FixtureRoot 'pk-not-a-repo'
 New-Item -ItemType Directory -Force -Path $pk | Out-Null
-$run = Invoke-Script -Name 'publish-knowledge.ps1' -ScriptArgs @('-SkillRoot', $script:Skill, '-DryRun')
-Assert-Match -Name 'PK1-dry-run-publishes-nothing' -Text $run.Text -Pattern 'RESULT: (nothing_to_publish|dry_run)'
-Add-Result -Name 'PK1-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
+
+# PK1 builds its OWN repository instead of publishing from wherever this checkout happens to sit.
+# Measured 2026-08-13: run against a `git archive` export -- the group's usual clean-HEAD evidence method
+# -- the skill copy is not a repository at all, publish-knowledge correctly refuses, and PK1 failed for the
+# environment rather than for the code. A gate that reds on a legitimate way of running it teaches people
+# to ignore it, and they then ignore it on the day it means something. With a repo of its own the case
+# also gets to assert the real property: a dry run must leave the repository byte-for-byte alone, which a
+# RESULT line alone never proved.
+if ($null -eq (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Output 'SKIP   PK1-dry-run-publishes-nothing     git is not installed on this machine'
+}
+else {
+    $pkRepo = Join-Path $FixtureRoot 'pk-own-repo'
+    New-Item -ItemType Directory -Force -Path $pkRepo | Out-Null
+    Copy-Item -LiteralPath $script:Skill -Destination (Join-Path $pkRepo 'skill') -Recurse -Force
+    $pkSkill = Join-Path $pkRepo 'skill'
+    $gitQuiet = { param([string[]]$GitArgs) & git -C $pkRepo @GitArgs 2>&1 | Out-Null }
+    & $gitQuiet @('init', '-q')
+    & $gitQuiet @('add', '-A')
+    & $gitQuiet @('-c', 'user.email=fixture@local', '-c', 'user.name=fixture', 'commit', '-q', '-m', 'fixture baseline')
+    $headBefore = (& git -C $pkRepo rev-parse HEAD 2>&1 | Out-String).Trim()
+
+    $run = Invoke-Script -Name 'publish-knowledge.ps1' -ScriptArgs @('-SkillRoot', $pkSkill, '-DryRun')
+    Assert-Match -Name 'PK1-dry-run-publishes-nothing' -Text $run.Text -Pattern 'RESULT: (nothing_to_publish|dry_run)'
+    Add-Result -Name 'PK1-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
+
+    $headAfter = (& git -C $pkRepo rev-parse HEAD 2>&1 | Out-String).Trim()
+    Add-Result -Name 'PK1-dry-run-adds-no-commit' -Passed ($headAfter -eq $headBefore) -Expected $headBefore -Actual $headAfter
+    $pkStaged = @(& git -C $pkRepo diff --cached --name-only 2>&1 | ForEach-Object { [string]$_ } | Where-Object { $_ -ne '' })
+    Add-Result -Name 'PK1-dry-run-stages-nothing' -Passed ($pkStaged.Count -eq 0) -Expected 'nothing-staged' -Actual $(if ($pkStaged.Count -eq 0) { 'nothing-staged' } else { ($pkStaged -join ',') })
+}
 $run = Invoke-Script -Name 'publish-knowledge.ps1' -ScriptArgs @('-SkillRoot', $pk, '-DryRun')
 Assert-Match -Name 'PK2-non-repo-names-clone' -Text $run.Text -Pattern 'git clone'
 Add-Result -Name 'PK2-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
@@ -1023,8 +1110,12 @@ Add-Result -Name 'L1-main-path-reaches-released' -Passed $reachedReleased -Expec
 # have blocked the simulation stopover (and vice versa) -- simulation and real are different axes,
 # not the same rung. Give any two ladder states the same order again and this goes red.
 $laddered = @($states | Where-Object { $null -ne $_.order })
+# Rename or drop `order` and $laddered is empty, so the uniqueness check compares nothing and reports
+# all-distinct. Its siblings do not cover that: L1's dangling and main-path assertions both read
+# next_status, not order. Asserting the population first is what makes the green mean something.
+Add-Result -Name 'L2-ladder-has-ordered-states' -Passed ($laddered.Count -ge 5) -Expected '>=5 ordered states' -Actual ([string]$laddered.Count)
 $duplicated = @($laddered | Group-Object { [int]$_.order } | Where-Object { $_.Count -gt 1 } | ForEach-Object { ('order {0}: {1}' -f $_.Name, (@($_.Group | ForEach-Object { [string]$_.status }) -join '+')) })
-Add-Result -Name 'L2-ladder-orders-are-unique' -Passed ($duplicated.Count -eq 0) -Expected 'all-distinct' -Actual $(if ($duplicated.Count -eq 0) { 'all-distinct' } else { $duplicated -join '; ' })
+Add-Result -Name 'L2-ladder-orders-are-unique' -Passed (($laddered.Count -ge 5) -and $duplicated.Count -eq 0) -Expected 'all-distinct' -Actual $(if ($laddered.Count -lt 5) { 'no-ordered-states' } elseif ($duplicated.Count -eq 0) { 'all-distinct' } else { $duplicated -join '; ' })
 
 # SL -- source-reuse (Phase 2) ladder structural + drift-parity guards. The source track has its own front
 # half (SOURCE_INTAKE→REFERENCES_GATHERED→CAPABILITY_MAPPED→IMPLEMENTED) then MERGES into the shared
@@ -1056,8 +1147,11 @@ else {
     }
     Add-Result -Name 'SL1-source-main-path-reaches-released' -Passed $srcReachedReleased -Expected 'SOURCE_INTAKE..RELEASED' -Actual $(if ($srcReachedReleased) { 'SOURCE_INTAKE..RELEASED' } else { "stops at $srcCursor" })
     $srcLaddered = @($sourceStates | Where-Object { $null -ne $_.order })
+    # Same hole as L2 on the source ladder: no ordered states means nothing to compare, which reads as
+    # all-distinct. SL3 does not cover it either -- it compares `requires`, never `order`.
+    Add-Result -Name 'SL2-source-ladder-has-ordered-states' -Passed ($srcLaddered.Count -ge 5) -Expected '>=5 ordered states' -Actual ([string]$srcLaddered.Count)
     $srcDup = @($srcLaddered | Group-Object { [int]$_.order } | Where-Object { $_.Count -gt 1 } | ForEach-Object { [string]$_.Name })
-    Add-Result -Name 'SL2-source-ladder-orders-are-unique' -Passed ($srcDup.Count -eq 0) -Expected 'all-distinct' -Actual $(if ($srcDup.Count -eq 0) { 'all-distinct' } else { "dup: $($srcDup -join ',')" })
+    Add-Result -Name 'SL2-source-ladder-orders-are-unique' -Passed (($srcLaddered.Count -ge 5) -and $srcDup.Count -eq 0) -Expected 'all-distinct' -Actual $(if ($srcLaddered.Count -lt 5) { 'no-ordered-states' } elseif ($srcDup.Count -eq 0) { 'all-distinct' } else { "dup: $($srcDup -join ',')" })
     $sharedDownstream = @('CUSTOMIZATION_RECORDED', 'AUTH_HANDOFF_READY', 'AUTH_CONTRACT_READY', 'BUILD_READY', 'VERIFIED_SIMULATION', 'VERIFIED', 'RELEASED', 'MIGRATION_REQUIRED', 'ROLLBACK_READY')
     $driftedStatuses = New-Object System.Collections.Generic.List[string]
     foreach ($sharedStatus in $sharedDownstream) {
@@ -1158,11 +1252,167 @@ Assert-Match -Name 'SH1-no-exe-upload-ask' -Text $run.Text -Pattern '请直接�
 Assert-Match -Name 'SH2-source-status-recognised' -Text $run.Text -Pattern '(?m)^当前状态: SOURCE_INTAKE'
 Assert-Match -Name 'SH2-source-next-action-printed' -Text $run.Text -Pattern '联网找同类开源参考'
 Assert-Match -Name 'SH2-source-next-status-command' -Text $run.Text -Pattern '-Status REFERENCES_GATHERED'
+# The banner must match the track: a source product used to get the "EXE 产品生命周期" title even though
+# routing was correct. Revert the track-aware banner in start-here.ps1 and SH2-source-banner-* red.
+Assert-Match -Name 'SH2-source-banner-not-exe-title' -Text $run.Text -Pattern '=== EXE 产品生命周期' -Absent
+Assert-Match -Name 'SH2-source-banner-is-source-title' -Text $run.Text -Pattern '源码复用二开 · 产品生命周期'
 $root = Join-Path $FixtureRoot 'sh-empty-two-entries'
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 $run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'SH3-bootstrap-offers-source-entry' -Text $run.Text -Pattern 'init-source-product\.ps1'
 Assert-Match -Name 'SH3-bootstrap-keeps-exe-entry' -Text $run.Text -Pattern '请直接上传 EXE'
+
+# GC -- the honest hard stop has to be REACHABLE, not merely documented. gap-classify.ps1 turns "this
+# category produced no evidence" into an evidence-bound blocked decision, but it shipped with zero
+# callers: nothing in the workflow, the entry point or any script named it, so the one escape hatch from
+# a category that genuinely cannot be analysed was unreachable and the agent took the cheap exit the
+# ANALYZED gate rewards -- fill not_applicable, drift into a shell, claim done. A capability nobody can
+# reach is indistinguishable from one that was never written.
+#
+# These assert on the STDOUT OF A REAL start-here RUN, deliberately: a string added to a comment, to
+# SKILL.md or to WORKFLOW.md is never printed, so no amount of prose can turn them green -- only wiring
+# on the executor can. Delete the ANALYSIS-FINDINGS branch in start-here.ps1 and GC1/GC2 go red.
+$root = New-Fixture -Name 'gc-honest-hard-stop'
+Set-Status -Root $root -Status 'BASELINE_CREATED'
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root, '-UserRequest', '继续维护这个产品')
+Assert-Match -Name 'GC1-reverse-categories-are-pending' -Text $run.Text -Pattern '逆向六类未逐类决定'
+Assert-Match -Name 'GC1-classifier-command-printed' -Text $run.Text -Pattern 'gap-classify\.ps1" -ProductRoot '
+# The command must arrive runnable. Naming the script while omitting the evidence binding would send the
+# agent to a gate that refuses it, which is how an escape hatch becomes a dead end.
+Assert-Match -Name 'GC1-command-carries-evidence-args' -Text $run.Text -Pattern '-CapabilityId .+ -Technique .+ -FailureCommand .+ -FailureOutputPath '
+Assert-Match -Name 'GC1-warns-off-not-applicable' -Text $run.Text -Pattern '不要填 not_applicable'
+Assert-Match -Name 'GC1-blocked-named-as-legal-ending' -Text $run.Text -Pattern 'blocked 就是合法结局'
+# Order is load-bearing, not cosmetic: gap-classify refuses outright when TOOL-INVENTORY.json was never
+# built ("never checked" is not "checked and found nothing"), so the discovery step has to be offered
+# first or the printed hatch fails on arrival.
+$dtAt = $run.Text.IndexOf('discover-tools.ps1')
+$gcAt = $run.Text.IndexOf('gap-classify.ps1')
+Add-Result -Name 'GC2-discovery-offered-before-classifier' -Passed ($dtAt -ge 0 -and $gcAt -gt $dtAt) `
+    -Expected 'discover-tools first' -Actual ("discover@$dtAt gap@$gcAt")
+# Conditional, not unconditional -- the cheapest way to fake GC1 is to print the hatch on every run,
+# which would fatten every task and bury the step that actually matters. A read-only progress question
+# and a source-track product (whose next rung has no reverse-engineering categories at all) must both
+# stay quiet.
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root, '-UserRequest', '现在做到哪一步了')
+Assert-Match -Name 'GC3-status-mode-stays-quiet' -Text $run.Text -Pattern 'gap-classify\.ps1' -Absent
+$root = New-SourceFixture -Name 'gc-source-track-quiet'
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'GC4-source-track-stays-quiet' -Text $run.Text -Pattern 'gap-classify\.ps1' -Absent
+
+# LT -- the other half of the same moment. gap-classify records the capability the machine could not
+# deliver; learn-tool.ps1 records the tool that finally did. It shipped even more isolated than the
+# classifier: the ONLY mention of it anywhere in the tree was a comment inside a test, which the
+# reachability gate deliberately does not count. Being the sole writer of the machine-local learned
+# layer, having no caller meant every product re-searched for tools this machine had already found
+# once -- a self-evolution entry point that never evolved. Same acceptance signal as GC, and for the
+# same reason: these assert on the stdout of a real start-here run, so a name added to SKILL.md or to
+# a comment cannot turn them green. Delete the block in start-here.ps1 and LT3/LT4 go red.
+$root = New-Fixture -Name 'lt-learn-tool-wiring'
+Set-Status -Root $root -Status 'BASELINE_CREATED'
+# "Never ran discovery" is not "discovery found nothing" -- the same distinction gap-classify enforces
+# one step above. With no inventory the agent is sent to discover-tools first, and offering the recorder
+# here would be an errand for a gap nobody has measured yet.
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root, '-UserRequest', '继续维护这个产品')
+Assert-Match -Name 'LT1-silent-without-an-inventory' -Text $run.Text -Pattern 'learn-tool\.ps1' -Absent
+$ltInv = Join-Path $root 'product-state\tooling\TOOL-INVENTORY.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ltInv) | Out-Null
+# Every role filled means there is nothing to learn. The cheapest way to fake LT3 is to print the hint
+# unconditionally, which fattens every run and trains the agent to skim past it, so this case has to sit
+# beside LT3 rather than after it.
+[IO.File]::WriteAllText($ltInv, '{"tools":[{"tool_id":"package-inspect","available":true}]}', (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root, '-UserRequest', '继续维护这个产品')
+Assert-Match -Name 'LT2-silent-when-every-role-is-filled' -Text $run.Text -Pattern 'learn-tool\.ps1' -Absent
+[IO.File]::WriteAllText($ltInv, '{"tools":[{"tool_id":"package-inspect","available":false},{"tool_id":"pe-inspect","available":true}]}', (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root, '-UserRequest', '继续维护这个产品')
+Assert-Match -Name 'LT3-recorder-offered-when-a-role-is-empty' -Text $run.Text -Pattern 'learn-tool\.ps1" -RoleId '
+# Named with the role that is actually empty rather than a placeholder: a role the agent has to guess
+# is one it will guess wrong, and a tool filed under the wrong role is one discovery will not look for.
+Assert-Match -Name 'LT3-names-the-empty-role' -Text $run.Text -Pattern 'learn-tool\.ps1" -RoleId package-inspect '
+Assert-Match -Name 'LT3-ordering-stated' -Text $run.Text -Pattern '先装、先用它把活真的干完，最后才记'
+# The bridge write changes whether this machine counts as able to do something, so the hint has to carry
+# the approval switch with it; stating the capability alone parks the mapping as pending forever.
+Assert-Match -Name 'LT3-bridge-needs-approval' -Text $run.Text -Pattern '-BridgeCapability .+ -BridgeApproved'
+# LT4 -- learn-tool.ps1 is owned and edited elsewhere. A renamed parameter would leave start-here.ps1
+# printing a command that fails at the prompt, and nothing else in the tree compares the two, so every
+# switch on the printed line is checked against the real param block instead of a copy of it.
+$ltLine = ''
+foreach ($line in ($run.Text -split "`n")) { if ($line -match 'learn-tool\.ps1"? -RoleId ') { $ltLine = $line; break } }
+$ltTokens = $null
+$ltParseErrors = $null
+$ltAst = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $script:Skill 'scripts\learn-tool.ps1'), [ref]$ltTokens, [ref]$ltParseErrors)
+$ltDeclared = @()
+if ($null -ne $ltAst -and $null -ne $ltAst.ParamBlock) {
+    $ltDeclared = @($ltAst.ParamBlock.Parameters | ForEach-Object { '-' + $_.Name.VariablePath.UserPath })
+}
+$ltTail = ''
+$ltSplit = [regex]::Match($ltLine, 'learn-tool\.ps1"?(.*)$')
+if ($ltSplit.Success) { $ltTail = $ltSplit.Groups[1].Value }
+$ltUsed = @([regex]::Matches($ltTail, '(?<![\w-])-([A-Za-z][A-Za-z0-9]*)') | ForEach-Object { '-' + $_.Groups[1].Value } | Select-Object -Unique)
+$ltUnknown = @($ltUsed | Where-Object { $ltDeclared -notcontains $_ })
+$ltChecked = ($ltUsed.Count -gt 0) -and ($ltDeclared.Count -gt 0)
+Add-Result -Name 'LT4-printed-switches-exist-on-recorder' -Passed ($ltChecked -and $ltUnknown.Count -eq 0) `
+    -Expected 'all-declared' -Actual $(if (-not $ltChecked) { 'nothing-to-check' } elseif ($ltUnknown.Count -eq 0) { 'all-declared' } else { 'unknown ' + ($ltUnknown -join ' ') })
+# LT5 -- a progress question is read-only, and learn-tool writes to the machine-local catalog. Printing
+# a write command into an answer the user only asked for information is how a status turn becomes an
+# unrequested change; the mode split already exists in start-here.ps1 and this hook must respect it.
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root, '-UserRequest', '现在做到哪一步了')
+Assert-Match -Name 'LT5-status-mode-stays-quiet' -Text $run.Text -Pattern 'learn-tool\.ps1' -Absent
+
+# AV -- A2: the WRITER must not stamp a verified-class status that the authoritative evidence gate
+# (validate-product-state.ps1) would reject. The source ladder's VERIFIED forward-gate requires are
+# satisfiable with only settled lifecycle strings, so before this fix a product whose whole contract
+# was "settled" but whose evidence was never bound walked straight to VERIFIED (gate_overridden:false)
+# while the read gate found it many errors short -- a STATE.yaml that lies to every consumer.
+# update-product-state now runs the read gate on a verified-class transition and rolls it back on
+# failure; -Force stays the recorded human override. Delete that evidence-gate block and AV1 reds.
+$root = New-SourceFixture -Name 'av-writer-evidence-gate'
+$avPs = Join-Path $root 'product-state'
+# Settle every unsettled scalar so the cumulative forward gate to VERIFIED passes -- without binding
+# any real evidence, which is exactly the shape the read gate must still reject.
+Get-ChildItem $avPs -Recurse -File -Filter *.yaml | ForEach-Object {
+    $c = Get-Content -Raw -Encoding UTF8 -LiteralPath $_.FullName
+    $c = [regex]::Replace($c, '(:\s*")(PENDING|UNVERIFIED|UNKNOWN|DISCOVERY_PENDING|TBD)(")', '${1}decided${3}')
+    [IO.File]::WriteAllText($_.FullName, $c, (New-Object Text.UTF8Encoding($false)))
+}
+$avCap = Join-Path $avPs 'source\CAPABILITY-MAP.yaml'
+[IO.File]::WriteAllText($avCap, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $avCap) -replace '(?m)^capabilities:\s*\[\]\s*$', "capabilities:`n  - id: c1`n    capability: cap-one`n    self_implementation: ""self-written in this project"""), (New-Object Text.UTF8Encoding($false)))
+$avCust = Join-Path $avPs 'CUSTOMIZATION-MANIFEST.yaml'
+[IO.File]::WriteAllText($avCust, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $avCust) -replace '(?m)^rules:\s*\[\]\s*$', "rules:`n  - id: r1`n    description: ""demo rule"""), (New-Object Text.UTF8Encoding($false)))
+$avLc = Join-Path $avPs 'auth\LAUNCH-CONTRACT.yaml'
+$avLcText = Get-Content -Raw -Encoding UTF8 -LiteralPath $avLc
+$avLcText = $avLcText -replace '(?m)^(\s*claimed_tier:\s*")[^"]*(")', '${1}C${2}'
+$avLcText = $avLcText -replace '(?m)^(\s*verified_tier:\s*")[^"]*(")', '${1}C${2}'
+$avLcText = $avLcText -replace '(?m)^(\s*protection_ceiling:\s*")[^"]*(")', '${1}C${2}'
+[IO.File]::WriteAllText($avLc, $avLcText, (New-Object Text.UTF8Encoding($false)))
+Set-Content -LiteralPath (Join-Path $avPs 'auth\AUTH-ADAPTER-REQUEST.md') -Value '# adapter request (fixture)' -Encoding UTF8
+# AV1 -- non-forced VERIFIED is refused by the evidence gate and rolled back to SOURCE_INTAKE.
+$run = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'VERIFIED')
+Assert-Match -Name 'AV1-writer-verified-runs-evidence-gate' -Text $run.Text -Pattern '证据门未通过'
+$avState = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $avPs 'STATE.yaml')
+Assert-Match -Name 'AV1-transition-rolled-back' -Text $avState -Pattern '(?m)^status:\s*"?SOURCE_INTAKE"?'
+# AV2 -- -Force is the recorded human override for evidence the gate cannot see, and is not blocked.
+$run = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'VERIFIED', '-Force')
+$avState = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $avPs 'STATE.yaml')
+Assert-Match -Name 'AV2-force-override-reaches-verified' -Text $avState -Pattern '(?m)^status:\s*"?VERIFIED"?'
+Assert-Match -Name 'AV2-force-recorded-on-disk' -Text $avState -Pattern '(?im)^gate_overridden:\s*"?true"?'
+
+# TR -- A4: `track: source` is a self-asserted string that switches off the EXE baseline + reverse-
+# engineering subsystem (six validator checks key off `-ne 'source'`). An EXE product carries a
+# baseline hash and a core_path; relabeling it track:source made ~17 EXE-track errors vanish. The
+# validator now requires positive source evidence, so an EXE intake wearing a source label is caught.
+# Delete the A4 block in validate-product-state.ps1 and TR1 goes green->red.
+$root = New-Fixture -Name 'tr-exe-mislabeled-source'
+$trState = Join-Path $root 'product-state\STATE.yaml'
+$trText = Get-Content -Raw -Encoding UTF8 -LiteralPath $trState
+if ($trText -match '(?m)^track:') { $trText = [regex]::Replace($trText, '(?m)^track:.*$', 'track: "source"') } else { $trText = 'track: "source"' + "`n" + $trText }
+[IO.File]::WriteAllText($trState, $trText, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'TR1-exe-mislabeled-source-is-caught' -Text $run.Text -Pattern '声称 track: source，却登记了 EXE 基线哈希'
+# TR2 -- a genuine source product (no baseline, no core, has the source front-half) is NOT flagged by A4.
+$root = New-SourceFixture -Name 'tr-genuine-source'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'TR2-genuine-source-not-baseline-flagged' -Text $run.Text -Pattern '却登记了 EXE 基线哈希' -Absent
+Assert-Match -Name 'TR2-genuine-source-front-half-ok' -Text $run.Text -Pattern 'track: source，但缺少 source' -Absent
 
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''

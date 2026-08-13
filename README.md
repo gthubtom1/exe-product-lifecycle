@@ -142,7 +142,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publish-knowledge.ps
 | `SKILL.md` | Skill 入口与路由边界，智能体从这里开始 |
 | `WORKFLOW.md` | 完整目录树、脚本参数、分模式流程 |
 | `scripts/` | PowerShell 脚本：产品状态机、输入登记、保护探测、工具发现、知识生命周期、自检测试 |
-| `assets/` | 状态定义 `lifecycle-states.json` 与产品脚手架 `product-scaffold/` |
+| `assets/` | EXE 轨道状态定义 `lifecycle-states.json` + 产品脚手架 `product-scaffold/`；源码复用轨道状态定义 `lifecycle-states-source.json` + 源脚手架 `source-scaffold/` |
 | `references/` | 按需加载的工具链、授权交接、知识生命周期说明 |
 | `knowledge/` | 公开、脱敏的可复用经验库（仅 JSON，带公开边界门禁） |
 | `agents/openai.yaml` | Codex 触发配置 |

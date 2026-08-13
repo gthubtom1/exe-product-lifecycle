@@ -25,10 +25,19 @@ protections:
 
 # 可改性结论：这是保护探测的落点，直接决定 MAINTENANCE-MODE 的组件策略。
 modifiability:
-  # CAN_PATCH 可直接二进制补丁 / OVERLAY_ONLY 只能资源覆盖 /
-  # WRAPPER_ONLY 只能外壳包裹不能动核心 / REBUILD_REQUIRED 需要源码重建 / UNKNOWN 证据不足
+  # CONTAINER 是安装包/自解压，真正的产品还在里面 / CAN_PATCH 可直接二进制补丁 /
+  # OVERLAY_ONLY 只能资源覆盖 / WRAPPER_ONLY 只能外壳包裹不能动核心 /
+  # REBUILD_REQUIRED 需要源码重建 / UNKNOWN 证据不足
   verdict: "UNKNOWN"
   reason: "UNVERIFIED"
+  # 容器类型：inno / nsis / installshield / wix / msi / 7z-sfx / rar-sfx / none
+  container_kind: "none"
+  # 这个判定是不是终态。yes = 先解开/脱壳，再对解出来的目标从头重新路由，不要在当前判定上往下做。
+  # CONTAINER 与可脱壳的 WRAPPER_ONLY（如 UPX）为 yes。
+  re_enter: "no"
+  # 什么情况才算真死路（机器可判的判据串），none 表示本分支没有死路。
+  # 注意区分：需要换个工具 / 工具没装，都不是死路，是重判或一次提醒。
+  dead_end_condition: "none"
   # 能不能给最终成品加固（加壳/防篡改）。加壳目标自带壳时常冲突，需实测。
   hardening_feasible: "UNKNOWN"       # yes / no / unknown
   hardening_notes: "UNVERIFIED"

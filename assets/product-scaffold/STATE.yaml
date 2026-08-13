@@ -17,6 +17,6 @@ last_patch_or_diff: "UNVERIFIED"
 last_verification_record: "UNVERIFIED"
 rollback_runbook: "product-state/rollback/ROLLBACK-RUNBOOK.md"
 last_verified_at: "UNVERIFIED"
-gate_overridden: false
+gate_overridden: "false"
 next_action: "建立程序档案并完成第一轮分析"
 blocking_items: []

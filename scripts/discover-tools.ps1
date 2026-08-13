@@ -48,6 +48,7 @@ $ErrorActionPreference = 'Stop'
 # Write-InventoryFile below is a thin alias over the shared atomic writer. Keeping a second copy
 # of the swap logic here is how the rest of this skill ended up with three YAML parsers.
 . (Join-Path $PSScriptRoot 'lib\product-state-common.ps1')
+. (Join-Path $PSScriptRoot 'lib\tool-catalog-common.ps1')
 
 $root = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $ProductRoot).Path
 $stateRoot = Join-Path $root 'product-state'
@@ -57,37 +58,12 @@ New-Item -ItemType Directory -Force -Path $toolingRoot | Out-Null
 $inventoryPath = Join-Path $toolingRoot 'TOOL-INVENTORY.md'
 $jsonPath = Join-Path $toolingRoot 'TOOL-INVENTORY.json'
 
-$catalog = @(
-    [pscustomobject]@{ id = 'file-hash'; category = '完整性'; names = @('Get-FileHash'); notes = '保存输入和发布物 SHA-256' },
-    [pscustomobject]@{ id = 'pe-triage'; category = 'PE 初筛'; names = @('die.exe', 'diec.exe', 'diec', 'Detect-It-Easy.exe', 'exeinfope.exe', 'ExeinfoPe.exe', 'peid.exe', 'strings.exe', 'strings', 'strings64.exe', '7z.exe', '7z', '7zz.exe', 'bz.exe', 'tar.exe', 'tar'); notes = '识别格式、字符串、压缩和资源' },
-    [pscustomobject]@{ id = 'pe-structure'; category = 'PE 结构'; names = @('dumpbin.exe', 'dumpbin', 'editbin.exe', 'llvm-readobj.exe', 'llvm-readobj', 'llvm-objdump.exe', 'llvm-objdump', 'objdump.exe', 'objdump', 'rabin2.exe', 'rabin2', 'pe-bear.exe', 'PE-bear.exe', 'CFF Explorer.exe', 'sigcheck.exe', 'sigcheck', 'sigcheck64.exe'); notes = '读取节、导入导出、CLR 和依赖' },
-    [pscustomobject]@{ id = 'native-static'; category = '原生静态'; names = @('ida.exe', 'ida64.exe', 'idat.exe', 'idat64.exe', 'ghidraRun.bat', 'analyzeHeadless.bat', 'r2.exe', 'r2', 'rizin.exe', 'rizin', 'rz.exe', 'cutter.exe', 'cutter-cli.exe'); notes = '函数、交叉引用、调用关系和差分' },
-    [pscustomobject]@{ id = 'dotnet-static'; category = '.NET'; names = @('dnSpyEx.exe', 'dnSpy-x86.exe', 'dnSpy.exe', 'ILSpy.exe', 'ilspycmd.exe', 'ilspycmd', 'ildasm.exe', 'ildasm', 'dotPeek.exe', 'de4dot.exe', 'de4dot', 'dotnet.exe', 'dotnet'); notes = '程序集、类型、资源和托管入口' },
-    [pscustomobject]@{ id = 'resource-edit'; category = '资源'; names = @('ResourceHacker.exe', 'rcedit.exe', 'ResEdit.exe', 'Restorator.exe', 'XNResourceEditor.exe', 'rc.exe', 'mt.exe', '7z.exe', '7z', '7zz.exe'); notes = '图标、版本资源和嵌入文件' },
-    [pscustomobject]@{ id = 'debugger'; category = '动态调试'; names = @('x64dbg.exe', 'x32dbg.exe', 'WinDbgX.exe', 'cdb.exe'); notes = '启动、异常、加载顺序和关键调用' },
-    [pscustomobject]@{ id = 'system-observe'; category = '系统行为'; names = @('Procmon.exe', 'procmon.exe', 'procexp.exe', 'ProcessExplorer.exe'); notes = '文件、注册表、进程、DLL 和权限' },
-    [pscustomobject]@{ id = 'runtime-instrumentation'; category = '运行时插桩'; names = @('frida.exe', 'frida-ps.exe', 'frida', 'frida-ps'); notes = '受控运行时参数和行为确认' },
-    [pscustomobject]@{ id = 'network-observe'; category = '网络观察'; names = @('tshark.exe', 'tshark', 'Wireshark.exe', 'wireshark', 'mitmproxy.exe', 'mitmdump.exe', 'Fiddler.exe', 'HTTPDebuggerUI.exe'); notes = '授权、更新、配置和端点证据' },
-    # Language / framework runtimes. Their purpose is to answer "the target is written in X -- does
-    # this machine have what it takes to analyse or rebuild X". Every id here starts with 'language-'
-    # so the summary line can list the detected stacks without re-classifying the whole catalog.
-    [pscustomobject]@{ id = 'language-dotnet'; category = '语言/框架'; names = @('dotnet.exe', 'dotnet', 'csc.exe', 'vbc.exe', 'fsc.exe'); notes = '.NET / C# / VB.NET / F#（配合 dnSpy/ILSpy 反编译）' },
-    [pscustomobject]@{ id = 'language-java'; category = '语言/框架'; names = @('java.exe', 'java', 'javac.exe', 'javac', 'jar.exe', 'kotlin.bat', 'kotlinc.bat'); notes = 'Java / Kotlin（配合 jadx/CFR 反编译）' },
-    [pscustomobject]@{ id = 'language-python'; category = '语言/框架'; names = @('python.exe', 'python', 'python3.exe', 'py.exe', 'py', 'pyinstaller.exe', 'pyinstxtractor.py'); notes = 'Python（PyInstaller/py2exe 打包需先解包）' },
-    [pscustomobject]@{ id = 'language-node'; category = '语言/框架'; names = @('node.exe', 'node', 'electron.exe', 'electron', 'npm.cmd', 'pnpm.cmd', 'yarn.cmd', 'asar.cmd', 'asar'); notes = 'Node / Electron（asar 解包 app 资源）' },
-    [pscustomobject]@{ id = 'language-go'; category = '语言/框架'; names = @('go.exe', 'go'); notes = 'Go（静态大体积单文件，符号常保留）' },
-    [pscustomobject]@{ id = 'language-rust'; category = '语言/框架'; names = @('rustc.exe', 'rustc', 'cargo.exe', 'cargo'); notes = 'Rust（静态链接，panic 字符串可定位）' },
-    [pscustomobject]@{ id = 'language-native'; category = '语言/框架'; names = @('cl.exe', 'gcc.exe', 'gcc', 'g++.exe', 'g++', 'clang.exe', 'clang', 'windres.exe'); notes = 'C / C++（MSVC / MinGW / Clang）' },
-    [pscustomobject]@{ id = 'language-delphi'; category = '语言/框架'; names = @('dcc32.exe', 'dcc64.exe', 'bds.exe', 'brcc32.exe'); notes = 'Delphi / C++Builder（VCL 窗体特征明显）' },
-    [pscustomobject]@{ id = 'language-qt'; category = '语言/框架'; names = @('qmake.exe', 'qmake', 'windeployqt.exe', 'moc.exe'); notes = 'Qt（qt 运行时 DLL 和资源系统）' },
-    [pscustomobject]@{ id = 'language-scripting'; category = '语言/框架'; names = @('AutoHotkey.exe', 'AutoHotkeyU64.exe', 'Aut2Exe.exe', 'AutoIt3.exe', 'flutter.bat', 'dart.exe'); notes = 'AutoHotkey / AutoIt / Flutter 等脚本或跨端框架' },
-    [pscustomobject]@{ id = 'build'; category = '构建'; names = @('MSBuild.exe', 'msbuild', 'cl.exe', 'link.exe', 'lib.exe', 'dotnet.exe', 'dotnet', 'cargo.exe', 'cargo', 'go.exe', 'go', 'node.exe', 'node', 'npm.cmd', 'npm', 'npx.cmd', 'npx', 'java.exe', 'javac.exe'); notes = '构建 Launcher、Adapter、资源和测试' },
-    [pscustomobject]@{ id = 'sign-release'; category = '签名发布'; names = @('signtool.exe', 'signtool', 'MakeCert.exe', 'makecert.exe', 'osslsigncode.exe', 'openssl.exe', 'openssl', '7z.exe', '7z', '7zz.exe'); notes = '签名、打包、校验和回滚包' },
-    [pscustomobject]@{ id = 'binary-diff'; category = '二进制差分'; names = @('radiff2.exe', 'radiff2', 'ghidriff.exe', 'ghidriff', 'BinDiff.exe', 'bindiff.exe', 'diaphora.py', 'diaphora'); notes = '比较上下游版本并定位变更' },
-    [pscustomobject]@{ id = 'managed-cleanup'; category = '.NET 清理'; names = @('de4dot.exe', 'de4dot'); notes = '仅在产品分析需要时处理托管混淆产物' },
-    [pscustomobject]@{ id = 'package-inspect'; category = '程序包'; names = @('asar.cmd', 'asar', 'upx.exe', 'upx', '7zFM.exe', '7z.exe', '7z', '7zz.exe', '7zr.exe', 'bz.exe', 'Bandizip.exe', 'innoextract.exe', 'innounp.exe', 'unzip.exe', 'unzip'); notes = 'Electron/压缩包/打包痕迹和资源' },
-    [pscustomobject]@{ id = 'automation'; category = '自动化'; names = @('python.exe', 'python', 'py.exe', 'py', 'uv.exe', 'pip.exe', 'pip3.exe', 'powershell.exe', 'powershell', 'pwsh.exe', 'pwsh', 'git.exe', 'git', 'curl.exe', 'jq.exe'); notes = '解析、差分、报告和测试' }
-)
+# The catalog is data, not code: 26 roles of { id, category, names[], notes } with no conditionals and
+# no function calls, so it lives in catalog/tools.builtin.json and is merged with whatever this machine
+# has learned in knowledge/tools/tools.learned.json. See lib\tool-catalog-common.ps1 for the merge and
+# for why the learned half must never be shipped in the source tree.
+$catalog = Get-ToolRoleTable
+$catalogWarnings = @(Get-ToolCatalogWarning)
 
 # Bumped whenever the search strategy itself changes. It is part of the reuse fingerprint, so an
 # inventory produced by an older, narrower search is rejected once and rediscovered -- otherwise a
@@ -422,7 +398,11 @@ $discoveryInputs = [pscustomobject]@{
     search_roots_only = [bool]$SearchRootsOnly
     use_everything = [bool]$UseEverything
     extra_root_fingerprint = $extraRootFingerprint
-    catalog_fingerprint = Get-TextFingerprint (($catalog | ForEach-Object { '{0}={1}' -f $_.id, (($_.names) -join ',') }) -join ';')
+    # Computed over the MERGED table (builtin + learned), never builtin alone. A fingerprint that
+    # ignored the learned layer would not change when a tool is appended, the cached snapshot would
+    # stay valid, and the newly learned tool would never be discovered -- while the append itself
+    # succeeded, the file did change, and nothing anywhere reported an error.
+    catalog_fingerprint = Get-ToolCatalogFingerprint -Roles $catalog
 }
 $everythingUsed = $false
 $everythingExe = ''
@@ -805,4 +785,9 @@ Write-InventoryFile -Path $jsonPath -Content (([pscustomobject]@{
 "searchrootsonly=$(if ($SearchRootsOnly) { 'yes' } else { 'no' })"
 "everything=$(if (-not $UseEverything) { 'off' } elseif ($SearchRootsOnly) { 'skipped-searchrootsonly' } elseif ($reuseApplied) { 'reused' } elseif ($everythingUsed) { 'used' } else { 'unavailable' })"
 "extrarootfiles=$($resolvedExtraRootFiles.Count)"
+"catalogroles=$(@($catalog).Count)"
+# On the summary line, not only mid-output: a run that printed one warning somewhere above and then
+# reported a clean summary is how a degraded learned layer goes unnoticed.
+"learnedlayer=$(if ($catalogWarnings.Count -eq 0) { 'ok' } else { "warn:$($catalogWarnings.Count)" })"
+foreach ($catalogWarning in $catalogWarnings) { "catalogwarning=$catalogWarning" }
 if (-not $reuseApplied -and $ReuseInventory) { "reuserejected=$reuseRejectReason" }

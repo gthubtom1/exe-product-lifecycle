@@ -280,6 +280,40 @@ try {
 
     Remove-Item -LiteralPath $journalPath -Force
 
+    # --- A2: verified-class transitions must satisfy the authoritative evidence gate --------------
+    # The forward gate above only checks the lifecycle table's `requires`. The hard evidence gates
+    # (RUN-EVIDENCE binding, EVIDENCE-LEDGER, core_fidelity, analysis-findings, ...) live in
+    # validate-product-state.ps1. A VERIFIED/RELEASED the read gate would reject is a STATE.yaml that
+    # lies to every downstream consumer, so run the read gate on the written state. Without -Force a
+    # failure rolls the transition back and refuses; with -Force it is allowed but recorded as an
+    # override on disk, so a forced verified state is never byte-identical to an earned one (this also
+    # covers the case where the forward gate passed but the evidence was never really bound).
+    if (($targetStatus -ne $fromStatus) -and ($targetStatus -in @('VERIFIED', 'VERIFIED_SIMULATION', 'RELEASED'))) {
+        $evidenceValidator = Join-Path $PSScriptRoot 'validate-product-state.ps1'
+        $evidenceOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $evidenceValidator -ProductRoot $root 2>&1 | ForEach-Object { [string]$_ })
+        $evidencePassed = ($LASTEXITCODE -eq 0)
+        $global:LASTEXITCODE = 0
+        if (-not $evidencePassed) {
+            if (-not $Force) {
+                # Roll both files back to their pre-transition content: the claim did not earn its
+                # evidence, so it must not survive on disk. The forward journal is already retired, so
+                # these are direct atomic restores rather than a -ResumeJournal case.
+                Write-FileAtomic -Path $statePath -Content $stateText
+                Write-FileAtomic -Path $indexPath -Content $indexText
+                $evidenceReasons = @($evidenceOut | Where-Object { $_ -match '^(ERROR:|RESULT: failed)' })
+                throw (New-UserFacingError -Message ("还不能把状态改成「$targetStatus」：证据门未通过，已回滚到「$fromStatus」。" + [Environment]::NewLine + ($evidenceReasons -join [Environment]::NewLine)) `
+                    -Hint '先补齐 validate-product-state.ps1 指出的证据（真实运行证据/证据账/核心保真度等）再改状态；确有表外证据时用 -Force 并在报告里写明原因。')
+            }
+            # -Force overrode the evidence gate. Record the override on disk (idempotently) so the
+            # forced state is never byte-identical to an earned one, matching the forward-gate override.
+            $gateOverridden = $true
+            $forcedState = Read-TextFileSafe -Path $statePath
+            if ($forcedState -notmatch '(?im)^gate_overridden:\s*"?true"?') {
+                Write-FileAtomic -Path $statePath -Content (Set-YamlScalar -Text $forcedState -Key 'gate_overridden' -Value 'true')
+            }
+        }
+    }
+
     $after = Get-LifecycleReadiness -StateRoot $stateRoot -Status $targetStatus -TableFile $lifecycleFile
     [pscustomobject]@{
         status = 'updated'

@@ -382,6 +382,23 @@ if (Test-Path -LiteralPath $statePath -PathType Leaf) {
     if (-not $stateSimulationOnly -and $stateStatus -eq 'VERIFIED_SIMULATION') {
         $errors.Add('VERIFIED_SIMULATION requires simulation_only: true')
     }
+    # A4: `track` is a self-asserted string that switches OFF the entire EXE baseline + reverse-
+    # engineering evidence subsystem (six downstream checks key off `-ne 'source'`). Require positive,
+    # machine-checkable evidence that a product claiming track:source really is a source-reuse product,
+    # so an EXE intake cannot dodge those gates by relabeling itself: it must carry the source front-
+    # half (source/SOURCE-INTAKE.yaml, which only a source intake creates) and must NOT carry EXE-
+    # intake markers (a 64-hex baseline_sha256 or a core_path, which only a handed-over binary has).
+    if ($stateTrack -eq 'source') {
+        if (-not (Test-Path -LiteralPath (Join-Path $stateRoot 'source\SOURCE-INTAKE.yaml') -PathType Leaf)) {
+            $errors.Add('STATE.yaml 声称 track: source，但缺少 source/SOURCE-INTAKE.yaml——源码复用产品必须带源前半段档案；track 不能用来跳过 EXE 基线/逆向证据门')
+        }
+        if ([regex]::IsMatch($stateText, '(?m)^baseline_sha256:\s*["'']?[0-9A-Fa-f]{64}["'']?\s*$')) {
+            $errors.Add('STATE.yaml 声称 track: source，却登记了 EXE 基线哈希 baseline_sha256——源码复用产品没有被交接的上游二进制；带基线就必须走 EXE 轨道，track:source 不能关掉基线/逆向门')
+        }
+        if (-not [string]::IsNullOrWhiteSpace($stateCoreName)) {
+            $errors.Add('STATE.yaml 声称 track: source，却登记了 core_path（被交接的核心可执行文件）——源码复用产品从自己源码构建、无交接 EXE；带 core_path 就必须走 EXE 轨道')
+        }
+    }
     # EXE-baseline identity: only the EXE track hands over a baseline executable. A source-reuse product is
     # built from the user's own source, so it has no preserved upstream binary and no baseline_sha256 --
     # judging it by a missing baseline would be a false failure. The source track proves its reality through
@@ -577,7 +594,13 @@ function Get-ManifestRecords {
             continue
         }
         $recordSize = Get-ManifestFieldValue -Line $normalized -Key 'size'
-        if ($null -ne $recordSize -and $recordSize -match '^[0-9]+$') { $current.size = [int64]$recordSize }
+        if ($null -ne $recordSize -and $recordSize -match '^[0-9]+$') { $current.size = [int64]$recordSize; continue }
+        # Which layer the finding was actually observed on. Absent on every pre-existing dossier,
+        # which is the whole reason the gate below treats "absent" as a third state instead of
+        # picking a default: defaulting to payload passes the entire backlog silently, defaulting
+        # to fail reddens it wholesale and the next person switches the gate off.
+        $recordLayer = Get-ManifestFieldValue -Line $normalized -Key 'observed_layer'
+        if ($null -ne $recordLayer) { $current.observed_layer = $recordLayer }
     }
     if ($null -ne $current) {
         [void]$records.Add([pscustomobject]$current)
@@ -1136,6 +1159,56 @@ if ($stateTrack -ne 'source' -and $stateStatus -in @('VERIFIED', 'RELEASED') -an
         if ($findingsBound -eq 0) {
             $errors.Add('ANALYSIS-FINDINGS.yaml 的逆向发现没有落到真实工具输出：至少要有一条 finding 带 path + sha256，指向 product-state/ 下真实存在、非空且哈希一致的工具输出文件（如 dumpbin/DIE/IDA 导出）——只在档案里打字声称做过逆向或 0 字节空文件判失败')
         }
+    }
+}
+
+# Layer gate: the findings count above says how many boxes were ticked, never which thing they were
+# ticked ON. On a container or a packed target you can dump strings, export resources, read the
+# static structure and trace runtime behaviour -- four real tool outputs, four real hashes, all four
+# through the gate above -- and every one of them describes the installer or the shell. So when the
+# router says the payload is not visible yet, a finding claiming to be ON the payload is wrong by
+# construction. Runs for any status (not just VERIFIED): catching this at ANALYZED is the point.
+$profilePathForLayer = Join-Path $stateRoot 'PROTECTION-PROFILE.yaml'
+if ($stateTrack -ne 'source' -and (Test-Path -LiteralPath $analysisFindingsPath -PathType Leaf) -and (Test-Path -LiteralPath $profilePathForLayer -PathType Leaf)) {
+    $layerProfileText = Read-StateText -Path $profilePathForLayer
+    $routingVerdict = Get-YamlIndentedScalar -Text $layerProfileText -Parent 'modifiability' -Key 'verdict'
+    $layerFindingsText = Read-StateText -Path $analysisFindingsPath
+    $layerPayload = 0
+    $layerPacker = 0
+    $layerContainer = 0
+    foreach ($layerRecord in @(Get-ManifestRecords -Text $layerFindingsText)) {
+        $layerValue = ''
+        if ($layerRecord.PSObject.Properties.Name -contains 'observed_layer') {
+            $layerValue = ([string]$layerRecord.observed_layer).Trim().ToLowerInvariant()
+        }
+        switch ($layerValue) {
+            'payload' { $layerPayload++ }
+            'packer' { $layerPacker++ }
+            'container' { $layerContainer++ }
+        }
+    }
+    # Unknown is the remainder against an INDEPENDENT count of the list, not a tally of records the
+    # parser produced. Get-ManifestRecords drops any record it extracted no known field from, so a
+    # legacy finding carrying only id/technique/summary is invisible to it -- counting unknowns
+    # inside that loop reported "findings=0 unknown=0" for a dossier full of unmeasured findings,
+    # which is the silent pass this third state exists to prevent.
+    $layerTotal = Get-YamlListCount -Text $layerFindingsText -Key 'findings'
+    if ($layerTotal -lt ($layerPayload + $layerPacker + $layerContainer)) {
+        $layerTotal = $layerPayload + $layerPacker + $layerContainer
+    }
+    $layerUnknown = $layerTotal - ($layerPayload + $layerPacker + $layerContainer)
+    # Third state on the summary line with a denominator, same shape as validate-knowledge's
+    # COVERAGE line. Unknown is neither counted as passing nor as failing -- it is reported, so a
+    # dossier that predates the field is visibly unmeasured instead of invisibly green.
+    Write-Output ("LAYER-COVERAGE: verdict={0} findings={1} payload={2} packer={3} container={4} unknown={5}" -f `
+        $(if ([string]::IsNullOrWhiteSpace($routingVerdict)) { 'absent' } else { $routingVerdict }), `
+        $layerTotal, $layerPayload, $layerPacker, $layerContainer, $layerUnknown)
+    if ($routingVerdict -in @('CONTAINER', 'WRAPPER_ONLY') -and $layerPayload -gt 0) {
+        # The error names the way out on purpose. Without it the cheapest move for someone who
+        # legitimately DID unpack is to relabel observed_layer to 'packer' and walk through -- which
+        # is precisely the behaviour this gate exists to stop. A gate whose exit is documented
+        # somewhere else is a gate that manufactures the forgery it was built to catch.
+        $errors.Add(('ANALYSIS-FINDINGS.yaml 有 ' + $layerPayload + ' 条 observed_layer=payload 的发现，但当前路由判定是 ' + $routingVerdict + '——此时本体还没有被看到，这些发现描述的只可能是容器或壳。出路（不要改标记蒙混）：如果你已经解开了容器 / 脱了壳，请对解出来的那个目标重新跑 detect-protections.ps1 重新路由（该判定的 re_enter 为 yes 即表示应当如此），第二轮判定不再是 ' + $routingVerdict + '，本体层发现自然合法；如果还没解开，请把这些发现改标为 container 或 packer'))
     }
 }
 

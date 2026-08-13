@@ -298,12 +298,28 @@ if ($codeSigning -eq 'signed') {
 # real target -- an untested verdict is how a packed binary silently gets a "just patch it" plan.
 # The packed-status read stays here because it depends on DIE's raw entropy JSON.
 $statusSaysPacked = ($packedStatus -match '(?i)packed') -and ($packedStatus -notmatch '(?i)not\s*packed')
-$verdictResult = Get-ModifiabilityVerdict -Packer $packer -EntropyTotal $entropyValue -StatusSaysPacked $statusSaysPacked -AntiDebug $antiDebug -SelfCheck $selfCheck -CodeSigning $codeSigning -FileFormat $fileFormat -LanguageFramework $languageFramework
+# Q1 before everything else: installer names arrive on the same DIE Protector/Packer line as real
+# packers, so without this reclassification a setup package reads as WRAPPER_ONLY at best and as a
+# patchable product at worst -- the one misroute that ships successfully with nothing changed.
+$containerKind = Get-ContainerKind -Packer $packer -TargetName $target
+$verdictResult = Get-ModifiabilityVerdict -Packer $packer -EntropyTotal $entropyValue -StatusSaysPacked $statusSaysPacked -AntiDebug $antiDebug -SelfCheck $selfCheck -CodeSigning $codeSigning -FileFormat $fileFormat -LanguageFramework $languageFramework -ContainerKind $containerKind
 $verdict = $verdictResult.Verdict
 $reason = $verdictResult.Reason
 $hardening = $verdictResult.Hardening
+$reEnter = $(if ($verdictResult.ReEnter) { 'yes' } else { 'no' })
+$deadEndCondition = [string]$verdictResult.DeadEndCondition
+if ([string]::IsNullOrWhiteSpace($deadEndCondition)) { $deadEndCondition = 'none' }
 if ($verdict -eq 'WRAPPER_ONLY') {
     $notes.Add('加壳目标再加壳几乎必然冲突，加固应针对外壳 Launcher，不要对核心二次加壳。')
+}
+if ($verdict -eq 'CONTAINER') {
+    $notes.Add('容器分支：先解开容器取出真正的产品 exe，再对它重新运行 detect-protections.ps1 重新路由。此刻登记的任何本体层（payload）分析发现都还看不到本体。')
+}
+if ($reEnter -eq 'yes') {
+    $notes.Add('本判定可重入：解开/脱壳后请对解出来的目标从头重新路由，不要在当前判定上继续往下做。')
+}
+if ($deadEndCondition -ne 'none') {
+    $notes.Add('死路判据（需连着定制需求一起判，不要只看目标）: ' + $deadEndCondition)
 }
 
 # --- write the profile ----------------------------------------------------------------------
@@ -346,6 +362,11 @@ foreach ($line in (Format-YamlList -Key 'packed_sections' -Items $packedSections
 [void]$lines.Add('modifiability:')
 [void]$lines.Add('  verdict: ' + (ConvertTo-YamlScalar $verdict))
 [void]$lines.Add('  reason: ' + (ConvertTo-YamlScalar $reason))
+# re_enter says whether this verdict is terminal. The findings gate reads verdict; a human reads
+# these two to know whether to open the thing and ask again, and what would actually count as stop.
+[void]$lines.Add('  container_kind: ' + (ConvertTo-YamlScalar $containerKind))
+[void]$lines.Add('  re_enter: ' + (ConvertTo-YamlScalar $reEnter))
+[void]$lines.Add('  dead_end_condition: ' + (ConvertTo-YamlScalar $deadEndCondition))
 [void]$lines.Add('  hardening_feasible: ' + (ConvertTo-YamlScalar $hardening))
 [void]$lines.Add('  hardening_notes: ' + (ConvertTo-YamlScalar 'UNVERIFIED'))
 foreach ($line in (Format-YamlList -Key 'evidence_refs' -Items @('product-state/analysis/die-detection.txt') -Indent 0)) { [void]$lines.Add($line) }

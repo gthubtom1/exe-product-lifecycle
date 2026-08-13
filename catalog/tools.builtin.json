@@ -1,0 +1,403 @@
+{
+    "schema_version":  1,
+    "layer":  "builtin",
+    "roles":  [
+                  {
+                      "id":  "file-hash",
+                      "category":  "完整性",
+                      "names":  [
+                                    "Get-FileHash"
+                                ],
+                      "notes":  "保存输入和发布物 SHA-256"
+                  },
+                  {
+                      "id":  "pe-triage",
+                      "category":  "PE 初筛",
+                      "names":  [
+                                    "die.exe",
+                                    "diec.exe",
+                                    "diec",
+                                    "Detect-It-Easy.exe",
+                                    "exeinfope.exe",
+                                    "ExeinfoPe.exe",
+                                    "peid.exe",
+                                    "strings.exe",
+                                    "strings",
+                                    "strings64.exe",
+                                    "7z.exe",
+                                    "7z",
+                                    "7zz.exe",
+                                    "bz.exe",
+                                    "tar.exe",
+                                    "tar"
+                                ],
+                      "notes":  "识别格式、字符串、压缩和资源"
+                  },
+                  {
+                      "id":  "pe-structure",
+                      "category":  "PE 结构",
+                      "names":  [
+                                    "dumpbin.exe",
+                                    "dumpbin",
+                                    "editbin.exe",
+                                    "llvm-readobj.exe",
+                                    "llvm-readobj",
+                                    "llvm-objdump.exe",
+                                    "llvm-objdump",
+                                    "objdump.exe",
+                                    "objdump",
+                                    "rabin2.exe",
+                                    "rabin2",
+                                    "pe-bear.exe",
+                                    "PE-bear.exe",
+                                    "CFF Explorer.exe",
+                                    "sigcheck.exe",
+                                    "sigcheck",
+                                    "sigcheck64.exe"
+                                ],
+                      "notes":  "读取节、导入导出、CLR 和依赖"
+                  },
+                  {
+                      "id":  "native-static",
+                      "category":  "原生静态",
+                      "names":  [
+                                    "ida.exe",
+                                    "ida64.exe",
+                                    "idat.exe",
+                                    "idat64.exe",
+                                    "ghidraRun.bat",
+                                    "analyzeHeadless.bat",
+                                    "r2.exe",
+                                    "r2",
+                                    "rizin.exe",
+                                    "rizin",
+                                    "rz.exe",
+                                    "cutter.exe",
+                                    "cutter-cli.exe"
+                                ],
+                      "notes":  "函数、交叉引用、调用关系和差分"
+                  },
+                  {
+                      "id":  "dotnet-static",
+                      "category":  ".NET",
+                      "names":  [
+                                    "dnSpyEx.exe",
+                                    "dnSpy-x86.exe",
+                                    "dnSpy.exe",
+                                    "ILSpy.exe",
+                                    "ilspycmd.exe",
+                                    "ilspycmd",
+                                    "ildasm.exe",
+                                    "ildasm",
+                                    "dotPeek.exe",
+                                    "de4dot.exe",
+                                    "de4dot",
+                                    "dotnet.exe",
+                                    "dotnet"
+                                ],
+                      "notes":  "程序集、类型、资源和托管入口"
+                  },
+                  {
+                      "id":  "resource-edit",
+                      "category":  "资源",
+                      "names":  [
+                                    "ResourceHacker.exe",
+                                    "rcedit.exe",
+                                    "ResEdit.exe",
+                                    "Restorator.exe",
+                                    "XNResourceEditor.exe",
+                                    "rc.exe",
+                                    "mt.exe",
+                                    "7z.exe",
+                                    "7z",
+                                    "7zz.exe"
+                                ],
+                      "notes":  "图标、版本资源和嵌入文件"
+                  },
+                  {
+                      "id":  "debugger",
+                      "category":  "动态调试",
+                      "names":  [
+                                    "x64dbg.exe",
+                                    "x32dbg.exe",
+                                    "WinDbgX.exe",
+                                    "cdb.exe"
+                                ],
+                      "notes":  "启动、异常、加载顺序和关键调用"
+                  },
+                  {
+                      "id":  "system-observe",
+                      "category":  "系统行为",
+                      "names":  [
+                                    "Procmon.exe",
+                                    "procmon.exe",
+                                    "procexp.exe",
+                                    "ProcessExplorer.exe"
+                                ],
+                      "notes":  "文件、注册表、进程、DLL 和权限"
+                  },
+                  {
+                      "id":  "runtime-instrumentation",
+                      "category":  "运行时插桩",
+                      "names":  [
+                                    "frida.exe",
+                                    "frida-ps.exe",
+                                    "frida",
+                                    "frida-ps"
+                                ],
+                      "notes":  "受控运行时参数和行为确认"
+                  },
+                  {
+                      "id":  "network-observe",
+                      "category":  "网络观察",
+                      "names":  [
+                                    "tshark.exe",
+                                    "tshark",
+                                    "Wireshark.exe",
+                                    "wireshark",
+                                    "mitmproxy.exe",
+                                    "mitmdump.exe",
+                                    "Fiddler.exe",
+                                    "HTTPDebuggerUI.exe"
+                                ],
+                      "notes":  "授权、更新、配置和端点证据"
+                  },
+                  {
+                      "id":  "language-dotnet",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "dotnet.exe",
+                                    "dotnet",
+                                    "csc.exe",
+                                    "vbc.exe",
+                                    "fsc.exe"
+                                ],
+                      "notes":  ".NET / C# / VB.NET / F#（配合 dnSpy/ILSpy 反编译）"
+                  },
+                  {
+                      "id":  "language-java",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "java.exe",
+                                    "java",
+                                    "javac.exe",
+                                    "javac",
+                                    "jar.exe",
+                                    "kotlin.bat",
+                                    "kotlinc.bat"
+                                ],
+                      "notes":  "Java / Kotlin（配合 jadx/CFR 反编译）"
+                  },
+                  {
+                      "id":  "language-python",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "python.exe",
+                                    "python",
+                                    "python3.exe",
+                                    "py.exe",
+                                    "py",
+                                    "pyinstaller.exe",
+                                    "pyinstxtractor.py"
+                                ],
+                      "notes":  "Python（PyInstaller/py2exe 打包需先解包）"
+                  },
+                  {
+                      "id":  "language-node",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "node.exe",
+                                    "node",
+                                    "electron.exe",
+                                    "electron",
+                                    "npm.cmd",
+                                    "pnpm.cmd",
+                                    "yarn.cmd",
+                                    "asar.cmd",
+                                    "asar"
+                                ],
+                      "notes":  "Node / Electron（asar 解包 app 资源）"
+                  },
+                  {
+                      "id":  "language-go",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "go.exe",
+                                    "go"
+                                ],
+                      "notes":  "Go（静态大体积单文件，符号常保留）"
+                  },
+                  {
+                      "id":  "language-rust",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "rustc.exe",
+                                    "rustc",
+                                    "cargo.exe",
+                                    "cargo"
+                                ],
+                      "notes":  "Rust（静态链接，panic 字符串可定位）"
+                  },
+                  {
+                      "id":  "language-native",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "cl.exe",
+                                    "gcc.exe",
+                                    "gcc",
+                                    "g++.exe",
+                                    "g++",
+                                    "clang.exe",
+                                    "clang",
+                                    "windres.exe"
+                                ],
+                      "notes":  "C / C++（MSVC / MinGW / Clang）"
+                  },
+                  {
+                      "id":  "language-delphi",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "dcc32.exe",
+                                    "dcc64.exe",
+                                    "bds.exe",
+                                    "brcc32.exe"
+                                ],
+                      "notes":  "Delphi / C++Builder（VCL 窗体特征明显）"
+                  },
+                  {
+                      "id":  "language-qt",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "qmake.exe",
+                                    "qmake",
+                                    "windeployqt.exe",
+                                    "moc.exe"
+                                ],
+                      "notes":  "Qt（qt 运行时 DLL 和资源系统）"
+                  },
+                  {
+                      "id":  "language-scripting",
+                      "category":  "语言/框架",
+                      "names":  [
+                                    "AutoHotkey.exe",
+                                    "AutoHotkeyU64.exe",
+                                    "Aut2Exe.exe",
+                                    "AutoIt3.exe",
+                                    "flutter.bat",
+                                    "dart.exe"
+                                ],
+                      "notes":  "AutoHotkey / AutoIt / Flutter 等脚本或跨端框架"
+                  },
+                  {
+                      "id":  "build",
+                      "category":  "构建",
+                      "names":  [
+                                    "MSBuild.exe",
+                                    "msbuild",
+                                    "cl.exe",
+                                    "link.exe",
+                                    "lib.exe",
+                                    "dotnet.exe",
+                                    "dotnet",
+                                    "cargo.exe",
+                                    "cargo",
+                                    "go.exe",
+                                    "go",
+                                    "node.exe",
+                                    "node",
+                                    "npm.cmd",
+                                    "npm",
+                                    "npx.cmd",
+                                    "npx",
+                                    "java.exe",
+                                    "javac.exe"
+                                ],
+                      "notes":  "构建 Launcher、Adapter、资源和测试"
+                  },
+                  {
+                      "id":  "sign-release",
+                      "category":  "签名发布",
+                      "names":  [
+                                    "signtool.exe",
+                                    "signtool",
+                                    "MakeCert.exe",
+                                    "makecert.exe",
+                                    "osslsigncode.exe",
+                                    "openssl.exe",
+                                    "openssl",
+                                    "7z.exe",
+                                    "7z",
+                                    "7zz.exe"
+                                ],
+                      "notes":  "签名、打包、校验和回滚包"
+                  },
+                  {
+                      "id":  "binary-diff",
+                      "category":  "二进制差分",
+                      "names":  [
+                                    "radiff2.exe",
+                                    "radiff2",
+                                    "ghidriff.exe",
+                                    "ghidriff",
+                                    "BinDiff.exe",
+                                    "bindiff.exe",
+                                    "diaphora.py",
+                                    "diaphora"
+                                ],
+                      "notes":  "比较上下游版本并定位变更"
+                  },
+                  {
+                      "id":  "managed-cleanup",
+                      "category":  ".NET 清理",
+                      "names":  [
+                                    "de4dot.exe",
+                                    "de4dot"
+                                ],
+                      "notes":  "仅在产品分析需要时处理托管混淆产物"
+                  },
+                  {
+                      "id":  "package-inspect",
+                      "category":  "程序包",
+                      "names":  [
+                                    "asar.cmd",
+                                    "asar",
+                                    "upx.exe",
+                                    "upx",
+                                    "7zFM.exe",
+                                    "7z.exe",
+                                    "7z",
+                                    "7zz.exe",
+                                    "7zr.exe",
+                                    "bz.exe",
+                                    "Bandizip.exe",
+                                    "innoextract.exe",
+                                    "innounp.exe",
+                                    "unzip.exe",
+                                    "unzip"
+                                ],
+                      "notes":  "Electron/压缩包/打包痕迹和资源"
+                  },
+                  {
+                      "id":  "automation",
+                      "category":  "自动化",
+                      "names":  [
+                                    "python.exe",
+                                    "python",
+                                    "py.exe",
+                                    "py",
+                                    "uv.exe",
+                                    "pip.exe",
+                                    "pip3.exe",
+                                    "powershell.exe",
+                                    "powershell",
+                                    "pwsh.exe",
+                                    "pwsh",
+                                    "git.exe",
+                                    "git",
+                                    "curl.exe",
+                                    "jq.exe"
+                                ],
+                      "notes":  "解析、差分、报告和测试"
+                  }
+              ]
+}

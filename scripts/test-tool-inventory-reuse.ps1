@@ -287,6 +287,69 @@ $evFull = Invoke-Discover -Root $evProduct -ExtraArgs @('-UseEverything')
 Add-Result -Id 'EV3-full-uses-or-unavailable' -Expected 'yes' -Actual $(if ((Get-Key $evFull 'everything') -in @('used', 'unavailable')) { 'yes' } else { 'no' })
 Add-Result -Id 'EV3-no-crash' -Expected 'no' -Actual $(if ($evFull.Crashed) { 'yes' } else { 'no' })
 
+# R16 the learned tool layer, end to end. The catalog is data now: catalog/tools.builtin.json merged with
+# knowledge/tools/tools.learned.json. Everything about "this machine can learn a tool" rests on one link --
+# an appended name must change catalog_fingerprint, because that is what invalidates the cached snapshot
+# and forces the rediscovery that finds the new tool. If the fingerprint were computed over the builtin
+# table alone the append would still succeed, the file would still change, the log would still be clean,
+# and the tool would simply never be found again -- so this asserts the whole chain, not just the write.
+#
+# Run against a COPY of the skill: writing a learned file into the real one would leave state behind, and
+# on a developer machine that file is the accumulated local memory this feature exists to protect.
+# -SearchRootsOnly keeps all three runs to one named directory, so the chain is exercised in seconds.
+$skillSource = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+$skillCopy = Join-Path $FixtureRoot 'skill-copy'
+New-Item -ItemType Directory -Force -Path $skillCopy | Out-Null
+foreach ($part in @('scripts', 'catalog', 'knowledge')) {
+    Copy-Item -LiteralPath (Join-Path $skillSource $part) -Destination (Join-Path $skillCopy $part) -Recurse -Force
+}
+$copiedScript = Join-Path $skillCopy 'scripts\discover-tools.ps1'
+$learnedPath = Join-Path $skillCopy 'knowledge\tools\tools.learned.json'
+
+function Invoke-CopiedDiscover {
+    param([string]$Root, [string[]]$ExtraArgs = @())
+    $callArgs = @($script:CommonDiscoverArgs) + @($ExtraArgs)
+    $raw = @(& $PowerShellHost -NoProfile -ExecutionPolicy Bypass -File $copiedScript -ProductRoot $Root @callArgs 2>&1)
+    $map = @{}
+    foreach ($line in @($raw | ForEach-Object { [string]$_ })) {
+        if ($line -match '^\s*([a-z_]+)=(.*)$') { $map[$Matches[1]] = $Matches[2] }
+    }
+    return [pscustomobject]@{ Keys = $map; Text = (@($raw | ForEach-Object { [string]$_ }) -join ' ; ') }
+}
+
+$p16 = New-Product -Name 'learned-layer'
+$narrowOnly = @('-SearchRootsOnly', '-AdditionalSearchRoot', $narrowRoot)
+$r16Cold = Invoke-CopiedDiscover -Root $p16 -ExtraArgs $narrowOnly
+Add-Result -Id 'R16-copy-runs-from-data' -Expected '26' -Actual (Get-Key $r16Cold 'catalogroles')
+Add-Result -Id 'R16-no-learned-layer-is-clean' -Expected 'ok' -Actual (Get-Key $r16Cold 'learnedlayer')
+$r16Reuse = Invoke-CopiedDiscover -Root $p16 -ExtraArgs (@('-ReuseInventory') + $narrowOnly)
+Add-Result -Id 'R16-reuses-before-learning' -Expected 'applied' -Actual (Get-Key $r16Reuse 'reuse')
+$fingerprintBefore = ''
+$json16 = Get-Json -Root $p16
+if ($json16) { $fingerprintBefore = [string]$json16.discovery_inputs.catalog_fingerprint }
+
+# Written directly rather than through learn-tool.ps1: this case is about discover-tools honouring the
+# learned layer, and routing it through the writer would let a broken reader hide behind a broken writer.
+$learnedDocument = '{"schema_version":1,"layer":"learned","roles":[{"id":"package-inspect","names":["r16-learned-probe.exe"],"learned":{"added_at":"2026-08-13T00:00:00Z","found_via":"web","source_url":"https://example.invalid/r16","install_route":"manual"}}]}'
+[IO.File]::WriteAllText($learnedPath, $learnedDocument, (New-Object Text.UTF8Encoding($false)))
+
+$r16After = Invoke-CopiedDiscover -Root $p16 -ExtraArgs (@('-ReuseInventory') + $narrowOnly)
+Add-Result -Id 'R16-learned-append-invalidates-cache' -Expected 'full-discovery' -Actual (Get-Key $r16After 'reuse')
+Add-Result -Id 'R16-rejected-for-changed-inputs' -Expected 'discovery inputs changed since the previous inventory' -Actual (Get-Key $r16After 'reuserejected')
+$fingerprintAfter = ''
+$json16After = Get-Json -Root $p16
+if ($json16After) { $fingerprintAfter = [string]$json16After.discovery_inputs.catalog_fingerprint }
+$fingerprintMoved = if ($fingerprintBefore -ne '' -and $fingerprintAfter -ne '' -and $fingerprintBefore -ne $fingerprintAfter) { 'changed' } else { 'unchanged' }
+Add-Result -Id 'R16-learned-append-changes-fingerprint' -Expected 'changed' -Actual $fingerprintMoved
+Add-Result -Id 'R16-role-count-unchanged-by-name-append' -Expected '26' -Actual (Get-Key $r16After 'catalogroles')
+
+# A learned layer that cannot be parsed must be reported, not skipped: skipping it silently returns the
+# fingerprint to its builtin value and every learned tool becomes invisible again with nothing said.
+[IO.File]::WriteAllText($learnedPath, '{ not json at all', (New-Object Text.UTF8Encoding($false)))
+$r16Corrupt = Invoke-CopiedDiscover -Root $p16 -ExtraArgs $narrowOnly
+Add-Result -Id 'R16-corrupt-learned-layer-warns' -Expected 'warn:1' -Actual (Get-Key $r16Corrupt 'learnedlayer')
+Add-Result -Id 'R16-corrupt-learned-still-discovers' -Expected '26' -Actual (Get-Key $r16Corrupt 'catalogroles')
+
 ''
 $failed = @($script:Results | Where-Object { $_.Status -eq 'FAIL' })
 "RESULT: $(@($script:Results | Where-Object { $_.Status -eq 'PASS' }).Count) passed, $($failed.Count) failed"

@@ -26,6 +26,9 @@ jobs:
       - name: Validate schema references
         shell: powershell
         run: python scripts/validate-schema-links.py
+      - name: Run skill layout reachability regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-skill-layout-reachability.ps1
       - name: Run evolution regression
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-evolution.ps1
@@ -58,6 +61,27 @@ jobs:
       - name: Run install parity regression
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-install-parity.ps1
+      - name: Validate capability library
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-capabilities.ps1
+      - name: Run capability admission gate regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-capability-evolution.ps1
+      - name: Run capability resolution regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-resolve-capability.ps1
+      - name: Run gap classification regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-gap-classify.ps1
+      - name: Run capability wiring regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-capability-wiring.ps1
+      - name: Run tool acquisition suggestion regression
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-suggest-tool-acquisition.ps1
+      - name: Run CI dual-host suite parity guard
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-ci-host-parity.ps1
 
   windows-powershell-7:
     runs-on: windows-latest
@@ -69,6 +93,9 @@ jobs:
       - name: Validate layout and knowledge
         shell: pwsh
         run: ./scripts/validate-skill-layout.ps1
+      - name: Run skill layout reachability regression
+        shell: pwsh
+        run: ./scripts/test-skill-layout-reachability.ps1
       - name: Validate schema references
         shell: pwsh
         run: python scripts/validate-schema-links.py
@@ -84,19 +111,52 @@ jobs:
       - name: Run product state gate regression
         shell: pwsh
         run: ./scripts/test-product-state-gates.ps1
+      - name: Run protection assessment regression
+        shell: pwsh
+        run: ./scripts/test-detect-protections.ps1
       - name: Run local temporary authorization contract regression
         shell: pwsh
         run: ./scripts/test-mock-authorization.ps1
       - name: Run local temporary authorization transport regression
         shell: pwsh
         run: ./scripts/test-mock-authorization-http.ps1
+      - name: Run tool inventory reuse regression
+        shell: pwsh
+        # -MaxSearchDepth caps how deep the discovery walk descends on the runner. The sweep is still
+        # real and full-MODE -- every fixed drive and every conventional tool-folder name is crossed,
+        # so R1/R7/R15 stay meaningful and the sweep that hid the 8.3-path and drive bugs is still
+        # exercised -- it just stops descending ten levels into C:\Program Files, which is the
+        # documented reason (`R1 cold run took 429.54s`) this step took minutes.
+        run: ./scripts/test-tool-inventory-reuse.ps1 -MaxSearchDepth 3
       - name: Run install parity regression
         shell: pwsh
         run: ./scripts/test-install-parity.ps1
+      - name: Validate capability library
+        shell: pwsh
+        run: ./scripts/validate-capabilities.ps1
+      - name: Run capability admission gate regression
+        shell: pwsh
+        run: ./scripts/test-capability-evolution.ps1
+      - name: Run capability resolution regression
+        shell: pwsh
+        run: ./scripts/test-resolve-capability.ps1
+      - name: Run gap classification regression
+        shell: pwsh
+        run: ./scripts/test-gap-classify.ps1
+      - name: Run capability wiring regression
+        shell: pwsh
+        run: ./scripts/test-capability-wiring.ps1
+      - name: Run tool acquisition suggestion regression
+        shell: pwsh
+        run: ./scripts/test-suggest-tool-acquisition.ps1
+      - name: Run CI dual-host suite parity guard
+        shell: pwsh
+        run: ./scripts/test-ci-host-parity.ps1
       - name: Verify generated files are committed
         shell: pwsh
         run: |
           ./scripts/rebuild-knowledge-index.ps1
+          ./scripts/rebuild-capability-index.ps1
           $dirty = @(git status --short)
           if ($dirty.Count -gt 0) {
             Write-Output '--- git status ---'

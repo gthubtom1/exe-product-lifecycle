@@ -688,6 +688,64 @@ function Write-UserFacingFailure {
     Write-Output ('出错脚本: ' + $ScriptName + $where + '（这一步没有修改任何文件，可以修正后重跑）')
 }
 
+function Get-YamlIndentedScalar {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Parent,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+
+    # Get-YamlScalar anchors at column 0, so it cannot see a child key. Scoping the read to one
+    # parent block matters rather than just relaxing the anchor: several blocks in these files carry
+    # same-named children, and a loose '^\s*key:' would return whichever happened to come first.
+    $lines = $Text -split "`r?`n"
+    $inBlock = $false
+    foreach ($line in $lines) {
+        if ($line -match ('^{0}:[ \t]*$' -f [regex]::Escape($Parent))) { $inBlock = $true; continue }
+        if (-not $inBlock) { continue }
+        # Any line back at column 0 ends the block.
+        if ($line -match '^\S') { break }
+        $m = [regex]::Match($line, ('^[ \t]+{0}:[ \t]*(.*?)[ \t\r]*$' -f [regex]::Escape($Key)))
+        if (-not $m.Success) { continue }
+        $value = $m.Groups[1].Value
+        if ($value.StartsWith('#')) { return '' }
+        $value = ($value -replace '[ \t]+#.*$', '').Trim()
+        if ($value.Length -ge 2) {
+            $first = $value.Substring(0, 1)
+            $last = $value.Substring($value.Length - 1, 1)
+            if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+        }
+        return $value.Trim()
+    }
+    return ''
+}
+
+function Get-ContainerKind {
+    param(
+        [string]$Packer = '',
+        [string]$TargetName = ''
+    )
+
+    # Q1 of the routing order: is this a container with the real product still inside it. Pure string
+    # work on evidence detect-protections already produced -- no file open, no tool run -- so the
+    # branch can be pinned by unit tests the same way the verdict tree is.
+    #
+    # These names arrive on DIE's Protector/Packer line, which is why they used to read as "packed".
+    # Reclassifying them matters because CONTAINER and WRAPPER_ONLY have different next actions:
+    # a packer gets unpacked in place, a container gets opened and the payload re-routed from Q1.
+    if ($TargetName -match '(?i)\.msi$') { return 'msi' }
+    if ([string]::IsNullOrWhiteSpace($Packer)) { return 'none' }
+    if ($Packer -match '(?i)inno\s*setup') { return 'inno' }
+    if ($Packer -match '(?i)\bNSIS\b|Nullsoft') { return 'nsis' }
+    if ($Packer -match '(?i)installshield') { return 'installshield' }
+    if ($Packer -match '(?i)\bWiX\b') { return 'wix' }
+    if ($Packer -match '(?i)7-?zip[^\n]*SFX|SFX[^\n]*7-?zip') { return '7z-sfx' }
+    if ($Packer -match '(?i)(winrar|\bRAR\b)[^\n]*SFX|SFX[^\n]*(winrar|\bRAR\b)') { return 'rar-sfx' }
+    return 'none'
+}
+
 function Get-ModifiabilityVerdict {
     param(
         [string]$Packer = 'unknown',
@@ -697,8 +755,19 @@ function Get-ModifiabilityVerdict {
         [string]$SelfCheck = 'unknown',
         [string]$CodeSigning = 'unknown',
         [string]$FileFormat = 'UNVERIFIED',
-        [string]$LanguageFramework = 'UNVERIFIED'
+        [string]$LanguageFramework = 'UNVERIFIED',
+        [string]$ContainerKind = '',
+        [string]$TargetName = ''
     )
+
+    # ContainerKind is derived here when the caller did not supply one, rather than defaulting to
+    # 'none'. A parameter that defaults to "no container" means any caller who forgets it silently
+    # loses the whole branch -- and losing this particular branch is the one failure in the table
+    # that ships successfully. The safe reading has to be what you get for free; passing the value
+    # explicitly stays available for callers that already classified it.
+    if ([string]::IsNullOrWhiteSpace($ContainerKind)) {
+        $ContainerKind = Get-ContainerKind -Packer $Packer -TargetName $TargetName
+    }
 
     # The one decision the whole maintenance strategy hangs on: given the static evidence, can the
     # target be patched, only wrapped, or nothing yet. It lives here as a pure function -- no file,
@@ -706,20 +775,59 @@ function Get-ModifiabilityVerdict {
     # branch is broken. Detecting protections but leaving the verdict untested is how a packed
     # binary silently gets a "just patch it" strategy. Conservative on purpose: protection earns
     # wrapping by default, and patching has to be earned by the absence of protection, never assumed.
+    # CONTAINER goes first, before the packed test, because every later question is meaningless on a
+    # container: "is it packed" answers for the installer, "is it .NET" reads the installer's entry
+    # point. It is also the only misroute in the whole table that FAILS QUIETLY -- rebranding an
+    # installer produces something that installs, runs and passes every evidence gate while the real
+    # application is untouched. Every other misroute is either loud or cheap to undo, so the
+    # conservative bias that already earns wrapping by default has to cover containers too.
+    if ($ContainerKind -ne 'none' -and -not [string]::IsNullOrWhiteSpace($ContainerKind)) {
+        # Only Inno has a real dead end: innoextract 1.9 (2020) is the last released version and its
+        # data-version ceiling is a property of that version, not of this machine -- installing a
+        # newer one is not an option because there is none. Kept distinct from "not a supported Inno
+        # Setup installer!", which means the container type was misidentified: that is a re-route,
+        # not a dead end, and conflating the two has already cost this project one wrong call.
+        $deadEnd = ''
+        if ($ContainerKind -eq 'inno') { $deadEnd = 'inno-data-version-above-innoextract-1.9-ceiling' }
+        return [pscustomobject]@{
+            Verdict = 'CONTAINER'
+            Reason = ('目标是容器（' + $ContainerKind + '，安装包/自解压），真正要二次发行的程序还在里面；先解开、找出里面那个 exe，再对它从头重新路由。不要改容器本身的图标/标题/联系方式——那些改动会完整交付并通过全部证据门，而真正的产品一个字节没动。')
+            Hardening = 'no'
+            ReEnter = $true
+            ContainerKind = $ContainerKind
+            DeadEndCondition = $deadEnd
+        }
+    }
     $entropyHigh = ($EntropyTotal -gt 7.2)
     $isPacked = ($Packer -notin @('none-detected', 'none', 'unknown', '')) -or $entropyHigh -or $StatusSaysPacked
     if ($isPacked) {
+        # ReEnter is what tells the caller this is not a terminal answer. UPX unpacks with `upx -d`,
+        # so the payload can be re-routed from Q1; anything else stays a wrapper-only job. Without
+        # this field all four verdicts looked alike and a caller could not see which ones continue.
+        $unpackable = ($Packer -match '(?i)\bUPX\b')
+        $deadEnd = ''
+        if ($Packer -match '(?i)themida|vmprotect|enigma|winlicense') {
+            # Deliberately conditional on the requirement, not on the packer alone: judging the shell
+            # by itself would kill a product that a Launcher-only delivery could have shipped.
+            $deadEnd = 'commercial-protector-and-core-logic-change-required'
+        }
         return [pscustomobject]@{
             Verdict = 'WRAPPER_ONLY'
-            Reason = '目标被加壳或高度加密，脱壳前看不到也改不动真实代码；默认只做外壳包裹，脱壳后另行评估。'
+            Reason = '目标被加壳或高度加密，脱壳前看不到也改不动真实代码；默认只做外壳包裹，脱壳后另行评估。不要在壳上做静态分析——字符串/资源/结构/动态行为四类发现都能产出且都能通过证据门，但描述的全是壳。'
             Hardening = 'no'
+            ReEnter = $unpackable
+            ContainerKind = 'none'
+            DeadEndCondition = $deadEnd
         }
     }
     if ($AntiDebug -eq 'yes' -or $SelfCheck -eq 'yes') {
         return [pscustomobject]@{
             Verdict = 'OVERLAY_ONLY'
-            Reason = '存在反调试或自校验迹象，直接改字节可能被程序自己发现而拒绝运行；优先资源覆盖与外壳，改字节需先确认校验范围。'
+            Reason = '存在反调试或自校验迹象，直接改字节可能被程序自己发现而拒绝运行；优先资源覆盖与外壳，改字节需先确认校验范围。改一处就跑一次，不要把定制全做完再试运行。'
             Hardening = 'unknown'
+            ReEnter = $false
+            ContainerKind = 'none'
+            DeadEndCondition = 'whole-image-self-check-with-vendor-signature'
         }
     }
     if ($CodeSigning -eq 'signed') {
@@ -727,25 +835,41 @@ function Get-ModifiabilityVerdict {
             Verdict = 'OVERLAY_ONLY'
             Reason = '目标有数字签名，改字节会使签名失效；优先资源覆盖与外壳，必须改核心时单独评估签名处置。'
             Hardening = 'unknown'
+            ReEnter = $false
+            ContainerKind = 'none'
+            DeadEndCondition = 'whole-image-self-check-with-vendor-signature'
         }
     }
     if ($FileFormat -match '(?i)\.NET' -or $LanguageFramework -match '(?i)\.NET|C#|VB\.NET') {
         return [pscustomobject]@{
             Verdict = 'CAN_PATCH'
-            Reason = '.NET 托管程序，可用 dnSpy/ILSpy 反编译并在 IL 层修改；仍需在测试环境验证。'
+            Reason = '.NET 托管程序，可用 dnSpy/ILSpy 反编译并在 IL 层修改；仍需在测试环境验证。先做一次最小改动并立刻运行，再开始正式定制。'
             Hardening = 'yes'
+            ReEnter = $false
+            ContainerKind = 'none'
+            DeadEndCondition = ''
         }
     }
     if ($Packer -eq 'none-detected' -and $AntiDebug -eq 'no') {
+        # No dead end here on purpose: when the early smoke edit fails on integrity, the answer is to
+        # re-route as OVERLAY_ONLY, not to stop. The self-check detector never returns 'no' and only
+        # knows five API names, so this branch is reachable with an undetected integrity check --
+        # which is exactly why the reason text demands one minimal edit + run before real work.
         return [pscustomobject]@{
             Verdict = 'CAN_PATCH'
-            Reason = '未发现加壳、反调试或签名阻碍，具备直接二进制补丁的条件；具体改动仍需在测试环境逐条验证。'
+            Reason = '未发现加壳、反调试或签名阻碍，具备直接二进制补丁的条件；先做一次最小改动（改一个字符串或图标）并立刻运行，跑得起来再开始正式定制。这个判定的含义是「静态证据没发现阻碍」，不是「已确认能改」。'
             Hardening = 'yes'
+            ReEnter = $false
+            ContainerKind = 'none'
+            DeadEndCondition = ''
         }
     }
     return [pscustomobject]@{
         Verdict = 'UNKNOWN'
-        Reason = '证据不足以判定可改性，需要人工用反汇编工具进一步确认后再定策略。'
+        Reason = '证据不足以判定可改性，需要人工用反汇编工具进一步确认后再定策略。不要按 CAN_PATCH 处理——「没测出来」与「测了没有」不是一回事。'
         Hardening = 'unknown'
+        ReEnter = $false
+        ContainerKind = 'none'
+        DeadEndCondition = ''
     }
 }
