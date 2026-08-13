@@ -1,0 +1,20 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+# 真机运行证据（VERIFIED/RELEASED 硬门）。必须真的启动一遍成品并留下截图或录屏，以及
+# “断网/离线被拒”“错卡密/授权失败被拒”的真实证据。每一块的 path + sha256 必须指向
+# product-state/ 下真实存在且哈希一致的截图/录屏文件；只在档案里打字“跑过了”判失败——
+# 截图/录屏比打字难造，这正是静态门堵不住“凭空捏造”的天敌。
+# 对应用户可测试切片：启动 → 授权 → 真实操作 → 观察 → 断网/错卡密被拒 → 回滚。
+launch:
+  summary: ""                    # 启动器→授权成功→进入核心→真实操作的截图/录屏
+  path: ""                       # 例: product-state/artifacts/verification/launch.png
+  sha256: ""                     # 该文件的 64 位 SHA-256
+offline_rejected:
+  summary: ""                    # 断网/离线时按授权档案被拒、未放行核心的截图/录屏
+  path: ""
+  sha256: ""
+badkey_rejected:
+  summary: ""                    # 错误卡密/授权失败被明确拒绝、未进入核心的截图/录屏
+  path: ""
+  sha256: ""
+source_of_truth: "product-state/reports/RUN-EVIDENCE.yaml plus bound screenshot/recording files"

@@ -5,7 +5,16 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ProductRoot,
 
-    [switch]$Strict
+    [switch]$Strict,
+
+    # RV-R2 opening (a): a static gate can prove a bound evidence artifact's hash matches its record, but
+    # it can never prove that artifact was really produced by exercising/analysing the product -- a
+    # determined forger can author a hash-consistent fake. That ceiling is out of a static gate's reach.
+    # -RequireAttestation opts a real VERIFIED/RELEASED into requiring a recorded named endorsement
+    # (product-state/attestation/ATTESTATION.yaml). The gate checks the record is complete and matches the
+    # status; it verifies NO identity and NO signature -- one made-up name produces the same record -- so
+    # the trust label it earns says exactly that instead of claiming external attestation.
+    [switch]$RequireAttestation
 )
 
 Set-StrictMode -Version Latest
@@ -26,7 +35,8 @@ $checkGroupsPlanned = @(
     'core-artifact-integrity', 'lifecycle-gates', 'product-index', 'learning-scaffold', 'tool-inventory',
     'input-manifest', 'unregistered-root-inputs', 'baseline-manifest', 'migration-manifests', 'orphan-preserved-inputs',
     'release-manifests', 'product-id-sweep', 'status-gates', 'critical-contracts',
-    'blocking-items', 'maintenance-strategy', 'placeholder-sweep', 'host-docs', 'credential-sweep'
+    'blocking-items', 'maintenance-strategy', 'placeholder-sweep', 'host-docs', 'credential-sweep',
+    'attestation'
 )
 $checkGroupsDone = New-Object System.Collections.Generic.List[string]
 $currentCheckGroup = ''
@@ -85,6 +95,73 @@ function Resolve-ProductRelativePath {
         FullPath = $full
         Inside   = $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
     }
+}
+
+# An empty (0-byte) file is no more evidence than a typed line -- its SHA-256 is the well-known constant
+# below -- so "bound to a real file" must also mean "a real, non-empty file". Without this the
+# run-evidence / evidence-ledger / analysis-findings hard gates accept a 0-byte file (or the same file
+# reused for all three run kinds), silently breaking the "空必红" promise. (RV attack finding F1.)
+$script:EmptyFileSha256 = 'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855'
+function Test-BoundEvidenceFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$FullPath,
+        [Parameter(Mandatory = $true)][string]$RecordedSha256
+    )
+
+    if (-not (Test-Path -LiteralPath $FullPath -PathType Leaf)) { return $false }
+    if ((Get-Item -LiteralPath $FullPath).Length -le 0) { return $false }
+    if ($RecordedSha256.ToUpperInvariant() -eq $script:EmptyFileSha256) { return $false }
+    # Evidence must live under product-state/ (as the binding comments promise), not merely somewhere in the
+    # product root -- otherwise evidence can be scattered outside the state dir. (RV attack finding F2.)
+    $stateRootPrefix = $script:stateRoot.TrimEnd('\') + '\'
+    if (-not $FullPath.StartsWith($stateRootPrefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    return ((Get-FileHash -LiteralPath $FullPath -Algorithm SHA256).Hash.ToUpperInvariant() -eq $RecordedSha256.ToUpperInvariant())
+}
+
+function Test-IsEmptyFileBypass {
+    param(
+        [Parameter(Mandatory = $true)][string]$FullPath,
+        [Parameter(Mandatory = $true)][string]$RecordedSha256
+    )
+
+    # A real product artifact (core / baseline / registered input) must be a non-empty file, and its recorded
+    # sha256 must not be the well-known empty-file constant. Returns $true if this binding is the 0-byte /
+    # empty-constant bypass -- the product body must not be a literal empty file. (RV final finding N-EPLC-5,
+    # same family as F1/N1: "空必红" must hold on the baseline/core/manifest hash bindings too.)
+    if ($RecordedSha256.ToUpperInvariant() -eq $script:EmptyFileSha256) { return $true }
+    if ((Test-Path -LiteralPath $FullPath -PathType Leaf) -and ((Get-Item -LiteralPath $FullPath).Length -le 0)) { return $true }
+    return $false
+}
+
+function Test-RunEvidenceBound {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Kind
+    )
+
+    # Read the indented block under "^<Kind>:" (up to the next top-level key) and pull its path + sha256.
+    # Bound = a 64-hex sha256 plus a path that stays inside the product and whose file's actual Get-FileHash
+    # matches. A screenshot/recording is far harder to fabricate than a typed line, so binding real-run
+    # evidence to a real file is the direct counter to opening (a)'s static-gate ceiling.
+    $lines = $Text -split "`r?`n"
+    $inBlock = $false
+    $blockPath = ''
+    $blockHash = ''
+    foreach ($line in $lines) {
+        if ($line -match ('^' + [regex]::Escape($Kind) + ':\s*(#.*)?$')) { $inBlock = $true; continue }
+        if (-not $inBlock) { continue }
+        if ($line -match '^\S') { break }
+        $pm = [regex]::Match($line, '^\s+path:\s*["'']?([^"''\r\n]+?)["'']?\s*$')
+        if ($pm.Success) { $blockPath = $pm.Groups[1].Value.Trim(); continue }
+        $hm = [regex]::Match($line, '^\s+sha256:\s*["'']?([0-9A-Fa-f]{64})["'']?\s*$')
+        if ($hm.Success) { $blockHash = $hm.Groups[1].Value.Trim() }
+    }
+    if ([string]::IsNullOrWhiteSpace($blockPath) -or [string]::IsNullOrWhiteSpace($blockHash)) { return '' }
+    $resolved = Resolve-ProductRelativePath -Relative $blockPath
+    if (-not $resolved.Inside) { return '' }
+    if (-not (Test-BoundEvidenceFile -FullPath $resolved.FullPath -RecordedSha256 $blockHash)) { return '' }
+    # Return the bound hash (not just $true) so the caller can require the three run kinds to be distinct.
+    return $blockHash.ToUpperInvariant()
 }
 
 function Test-RegisteredInputHash {
@@ -266,8 +343,15 @@ $stateStatus = ''
 $stateSimulationOnly = $false
 $stateBaselineHash = ''
 $stateCoreName = ''
+# Phase 2: which lifecycle ladder governs this product. A source-reuse product carries track: source and
+# runs lifecycle-states-source.json; a legacy/EXE product has no track and runs the EXE ladder. Read here so
+# every downstream group (lifecycle gate, EXE-baseline guards, the SR-repair legal-values) agrees on it.
+$stateTrack = ''
+$lifecycleFile = 'lifecycle-states.json'
 if (Test-Path -LiteralPath $statePath -PathType Leaf) {
     $stateText = Read-StateText -Path $statePath
+    $stateTrack = (Get-YamlScalar -Text $stateText -Key 'track').Trim()
+    $lifecycleFile = Get-LifecycleTableFileForTrack -Track $stateTrack
     if ($stateText -match '__[A-Z0-9_]+__') {
         $errors.Add('STATE.yaml still contains scaffold placeholders')
     }
@@ -288,7 +372,7 @@ if (Test-Path -LiteralPath $statePath -PathType Leaf) {
     # places is exactly how ISSUE-096 happened -- the table gained a state this copy lacked, so a
     # legitimate status read back as unrecognized. One source means a state added to
     # lifecycle-states.json is recognized here automatically.
-    $allowedStatuses = @((Get-LifecycleTable).states | ForEach-Object { [string]$_.status })
+    $allowedStatuses = @((Get-LifecycleTable -TableFile $lifecycleFile).states | ForEach-Object { [string]$_.status })
     if ($allowedStatuses -notcontains $stateStatus) {
         $errors.Add('STATE.yaml has no recognized status')
     }
@@ -298,29 +382,38 @@ if (Test-Path -LiteralPath $statePath -PathType Leaf) {
     if (-not $stateSimulationOnly -and $stateStatus -eq 'VERIFIED_SIMULATION') {
         $errors.Add('VERIFIED_SIMULATION requires simulation_only: true')
     }
-    $hashMatch = [regex]::Match($stateText, '(?m)^baseline_sha256:\s*["'']?([0-9A-Fa-f]{64})["'']?\s*$')
-    if (-not $hashMatch.Success) {
-        $errors.Add('STATE.yaml baseline_sha256 is missing or invalid')
-    }
-    else {
-        $stateBaselineHash = $hashMatch.Groups[1].Value.ToUpperInvariant()
-        $baselineArtifact = Get-YamlScalar -Text $stateText -Key 'baseline_artifact'
-        if ([string]::IsNullOrWhiteSpace($baselineArtifact)) {
-            $errors.Add('STATE.yaml baseline_artifact is missing')
+    # EXE-baseline identity: only the EXE track hands over a baseline executable. A source-reuse product is
+    # built from the user's own source, so it has no preserved upstream binary and no baseline_sha256 --
+    # judging it by a missing baseline would be a false failure. The source track proves its reality through
+    # build/run evidence (EVIDENCE-LEDGER) and the real-run gate instead, both of which still apply.
+    if ($stateTrack -ne 'source') {
+        $hashMatch = [regex]::Match($stateText, '(?m)^baseline_sha256:\s*["'']?([0-9A-Fa-f]{64})["'']?\s*$')
+        if (-not $hashMatch.Success) {
+            $errors.Add('STATE.yaml baseline_sha256 is missing or invalid')
         }
         else {
-            $baselineResolved = Resolve-ProductRelativePath -Relative $baselineArtifact
-            $artifactPath = $baselineResolved.FullPath
-            if (-not $baselineResolved.Inside) {
-                $errors.Add("STATE.yaml baseline_artifact points outside the product directory: $baselineArtifact")
+            $stateBaselineHash = $hashMatch.Groups[1].Value.ToUpperInvariant()
+            if ($stateBaselineHash -eq $script:EmptyFileSha256) {
+                $errors.Add('STATE.yaml baseline_sha256 是空文件常量（E3B0C442…）：被二次发行的核心/基线不能是 0 字节空文件，请登记真实的产品本体')
             }
-            elseif (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
-                $errors.Add("baseline artifact is missing: $baselineArtifact")
+            $baselineArtifact = Get-YamlScalar -Text $stateText -Key 'baseline_artifact'
+            if ([string]::IsNullOrWhiteSpace($baselineArtifact)) {
+                $errors.Add('STATE.yaml baseline_artifact is missing')
             }
             else {
-                $actual = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToUpperInvariant()
-                if ($actual -ne $hashMatch.Groups[1].Value.ToUpperInvariant()) {
-                    $errors.Add("baseline hash mismatch: expected $($hashMatch.Groups[1].Value), actual $actual")
+                $baselineResolved = Resolve-ProductRelativePath -Relative $baselineArtifact
+                $artifactPath = $baselineResolved.FullPath
+                if (-not $baselineResolved.Inside) {
+                    $errors.Add("STATE.yaml baseline_artifact points outside the product directory: $baselineArtifact")
+                }
+                elseif (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+                    $errors.Add("baseline artifact is missing: $baselineArtifact")
+                }
+                else {
+                    $actual = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToUpperInvariant()
+                    if ($actual -ne $hashMatch.Groups[1].Value.ToUpperInvariant()) {
+                        $errors.Add("baseline hash mismatch: expected $($hashMatch.Groups[1].Value), actual $actual")
+                    }
                 }
             }
         }
@@ -331,7 +424,8 @@ if (Test-Path -LiteralPath $statePath -PathType Leaf) {
 # artifacts/upstream was hashed, so swapping the live executable at the product root still
 # reported "passed". A field the downstream trusts and no one checks is worse than a missing one.
 Enter-CheckGroup 'core-artifact-integrity'
-if (-not [string]::IsNullOrWhiteSpace($stateCoreName) -and -not [string]::IsNullOrWhiteSpace($stateBaselineHash)) {
+# EXE-only: a source-reuse product has no handed-over core executable to hash against a baseline.
+if ($stateTrack -ne 'source' -and -not [string]::IsNullOrWhiteSpace($stateCoreName) -and -not [string]::IsNullOrWhiteSpace($stateBaselineHash)) {
     $coreAbsolute = if ([IO.Path]::IsPathRooted($stateCoreName)) { $stateCoreName } else { Join-Path $root ($stateCoreName.Replace('/', '\')) }
     if (-not (Test-Path -LiteralPath $coreAbsolute -PathType Leaf)) {
         # core_path holds a bare file name, so a product whose executable was handed over from
@@ -363,7 +457,7 @@ if (-not [string]::IsNullOrWhiteSpace($stateCoreName) -and -not [string]::IsNull
 Enter-CheckGroup 'lifecycle-gates'
 $lifecycleReadiness = $null
 if (-not [string]::IsNullOrWhiteSpace($stateStatus) -and (Test-Path -LiteralPath $stateRoot -PathType Container)) {
-    $lifecycleReadiness = Get-LifecycleReadiness -StateRoot $stateRoot -Status $stateStatus
+    $lifecycleReadiness = Get-LifecycleReadiness -StateRoot $stateRoot -Status $stateStatus -TableFile $lifecycleFile
     foreach ($item in $lifecycleReadiness.Unmet) {
         $errors.Add("status $stateStatus is not backed by the evidence $($item.RequiredBy) requires: $($item.Why) [$($item.Detail)]")
     }
@@ -650,6 +744,10 @@ function Test-ManifestFileHashes {
             $errors.Add("manifest file is missing: $relative")
             continue
         }
+        if (Test-IsEmptyFileBypass -FullPath $absolute -RecordedSha256 $expectedHash) {
+            $errors.Add("manifest 记录指向 0 字节空文件或用空文件常量哈希蒙混，不算真实产物: $relative")
+            continue
+        }
         $actualHash = (Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToUpperInvariant()
         if ($actualHash -ne $expectedHash.ToUpperInvariant()) {
             $errors.Add("manifest hash mismatch: $relative; expected $expectedHash, actual $actualHash")
@@ -672,13 +770,18 @@ if (-not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) {
 Enter-CheckGroup 'input-manifest'
 $inputManifestPath = Join-Path $stateRoot 'artifacts/INPUT-MANIFEST.yaml'
 if (-not (Test-Path -LiteralPath $inputManifestPath -PathType Leaf)) {
-    if ($stateStatus -in $verifiedStatuses) {
-        # Deleting the manifest used to be the cheapest way past this file's hash checks: with no
-        # records there is nothing to compare, and the missing manifest was only a warning.
-        $errors.Add('input manifest is missing while product state is verified; the preserved inputs are then under no hash constraint at all')
-    }
-    else {
-        $warnings.Add('input manifest is not generated yet; preserve and register all supplied files before analysis')
+    # EXE-only: the input manifest records the handed-over EXE/installer/DLL bundle. A source-reuse product
+    # has no such upstream bundle (it is built from the user's own source), so a missing manifest is neither
+    # an error nor a to-do for it.
+    if ($stateTrack -ne 'source') {
+        if ($stateStatus -in $verifiedStatuses) {
+            # Deleting the manifest used to be the cheapest way past this file's hash checks: with no
+            # records there is nothing to compare, and the missing manifest was only a warning.
+            $errors.Add('input manifest is missing while product state is verified; the preserved inputs are then under no hash constraint at all')
+        }
+        else {
+            $warnings.Add('input manifest is not generated yet; preserve and register all supplied files before analysis')
+        }
     }
 }
 else {
@@ -697,7 +800,10 @@ else {
 # "app-v2.exe" into the product folder and says "update this" -- and the whole intake was blind to
 # it: incoming/ stayed empty, so mode selection saw nothing to do and the validator said passed.
 Enter-CheckGroup 'unregistered-root-inputs'
-if (Test-Path -LiteralPath $stateRoot -PathType Container) {
+# EXE-only: this compares product-root files against the baseline/registered-input hashes to catch a new
+# upstream build dropped next to the old one. A source-reuse product's root is the user's own project tree
+# (many source files, no baseline), so this comparison does not apply and would false-flag project files.
+if ($stateTrack -ne 'source' -and (Test-Path -LiteralPath $stateRoot -PathType Container)) {
     $hostInstructionNames = @('AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'RULES.md', 'RULES_zh.md')
     $unregistered = New-Object System.Collections.Generic.List[string]
     foreach ($candidate in @(Get-ChildItem -LiteralPath $root -File -ErrorAction SilentlyContinue)) {
@@ -731,6 +837,9 @@ if (Test-Path -LiteralPath $baselineManifestPath -PathType Leaf) {
         }
         elseif (-not (Test-Path -LiteralPath $baselineAbsolute -PathType Leaf)) {
             $errors.Add("baseline manifest artifact is missing: $baselinePath")
+        }
+        elseif (Test-IsEmptyFileBypass -FullPath $baselineAbsolute -RecordedSha256 $baselineHashMatch.Groups[1].Value) {
+            $errors.Add("baseline manifest 指向 0 字节空文件或用空文件常量哈希蒙混: $baselinePath")
         }
         else {
             $baselineActual = (Get-FileHash -LiteralPath $baselineAbsolute -Algorithm SHA256).Hash.ToUpperInvariant()
@@ -950,7 +1059,12 @@ if ($stateStatus -in @('VERIFIED', 'RELEASED') -and (Test-Path -LiteralPath $rol
             $rollbackSubDir = Join-Path $stateRoot $rollbackSub
             if (-not (Test-Path -LiteralPath $rollbackSubDir -PathType Container)) { continue }
             foreach ($rollbackPkg in @(Get-ChildItem -LiteralPath $rollbackSubDir -Recurse -File -ErrorAction SilentlyContinue)) {
-                if ($runbookHexes.Contains((Get-FileHash -LiteralPath $rollbackPkg.FullName -Algorithm SHA256).Hash.ToUpperInvariant())) { $rollbackBound = $true; break }
+                # A 0-byte "package" (whose sha256 is the empty-file constant) is not a real rollback target,
+                # same rule as the evidence gates -- skip it so the empty-file bypass cannot reach 真回滚. (RV recheck N1.)
+                if ($rollbackPkg.Length -le 0) { continue }
+                $rollbackPkgHash = (Get-FileHash -LiteralPath $rollbackPkg.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+                if ($rollbackPkgHash -eq $script:EmptyFileSha256) { continue }
+                if ($runbookHexes.Contains($rollbackPkgHash)) { $rollbackBound = $true; break }
             }
             if ($rollbackBound) { break }
         }
@@ -986,15 +1100,88 @@ if ($stateStatus -in @('VERIFIED', 'RELEASED') -and (Test-Path -LiteralPath $evi
         foreach ($ledgerRecord in @(Get-ManifestRecords -Text $ledgerText | Where-Object { ($_.PSObject.Properties.Name -contains 'path') -and ($_.PSObject.Properties.Name -contains 'sha256') })) {
             $ledgerResolved = Resolve-ProductRelativePath -Relative ([string]$ledgerRecord.path)
             if (-not $ledgerResolved.Inside) { continue }
-            if (-not (Test-Path -LiteralPath $ledgerResolved.FullPath -PathType Leaf)) { continue }
-            $ledgerActual = (Get-FileHash -LiteralPath $ledgerResolved.FullPath -Algorithm SHA256).Hash.ToUpperInvariant()
-            if ($ledgerActual -eq ([string]$ledgerRecord.sha256).ToUpperInvariant()) { $ledgerBound++ }
+            if (Test-BoundEvidenceFile -FullPath $ledgerResolved.FullPath -RecordedSha256 ([string]$ledgerRecord.sha256)) { $ledgerBound++ }
         }
         if ($ledgerBound -eq 0) {
-            $errors.Add('EVIDENCE-LEDGER.yaml 的运行期证据没有绑定真实产物：至少要有一条 entry 带 path + sha256，指向 product-state/ 下真实存在且哈希一致的证据文件——纯文本声明（凭空捏造）判失败')
+            $errors.Add('EVIDENCE-LEDGER.yaml 的运行期证据没有绑定真实产物：至少要有一条 entry 带 path + sha256，指向 product-state/ 下真实存在、非空且哈希一致的证据文件——纯文本声明（凭空捏造）或 0 字节空文件判失败')
         }
     }
 }
+
+# Reverse-engineering findings must be real, not a typed claim (提高 EXE 二开 + 反捏造, mirrors EB). A
+# real VERIFIED/RELEASED 二开 rests on actual reverse engineering -- disassembly, static structure/
+# strings/resources, dynamic behaviour, unpacking -- so ANALYSIS-FINDINGS must carry at least one
+# finding BOUND to a real artifact under product-state/ whose Get-FileHash matches the recorded sha256.
+# This is the same fabricate-from-nothing defence the evidence ledger uses: typing "反汇编过了" with no
+# saved tool output is not evidence. (A determined forger can still author a fake file matching its own
+# recorded hash; defeating that needs trusted execution and is out of a static gate's reach.)
+$analysisFindingsPath = Join-Path $stateRoot 'analysis/ANALYSIS-FINDINGS.yaml'
+# EXE-only: reverse-engineering findings are how an opaque EXE is understood. A source-reuse product already
+# has the source, so disassembly/unpacking do not apply -- its reality is proven by build + real-run
+# evidence (EVIDENCE-LEDGER + RUN-EVIDENCE), which still gate the source track's VERIFIED below.
+if ($stateTrack -ne 'source' -and $stateStatus -in @('VERIFIED', 'RELEASED') -and (Test-Path -LiteralPath $analysisFindingsPath -PathType Leaf)) {
+    $findingsText = Read-StateText -Path $analysisFindingsPath
+    if ((Get-YamlListCount -Text $findingsText -Key 'findings') -le 0) {
+        $errors.Add('ANALYSIS-FINDINGS.yaml 的 findings 为空——真实 VERIFIED 的 EXE 二开必须至少留下一条逆向分析发现（反汇编/静态结构/字符串/资源/动态行为/脱壳之一），而不是空记录')
+    }
+    else {
+        # Same hash-binding shape as EVIDENCE-LEDGER above: at least one finding must carry path + sha256
+        # pointing at a file under product-state/ that exists and whose actual hash equals the recorded one.
+        $findingsBound = 0
+        foreach ($findingRecord in @(Get-ManifestRecords -Text $findingsText | Where-Object { ($_.PSObject.Properties.Name -contains 'path') -and ($_.PSObject.Properties.Name -contains 'sha256') })) {
+            $findingResolved = Resolve-ProductRelativePath -Relative ([string]$findingRecord.path)
+            if (-not $findingResolved.Inside) { continue }
+            if (Test-BoundEvidenceFile -FullPath $findingResolved.FullPath -RecordedSha256 ([string]$findingRecord.sha256)) { $findingsBound++ }
+        }
+        if ($findingsBound -eq 0) {
+            $errors.Add('ANALYSIS-FINDINGS.yaml 的逆向发现没有落到真实工具输出：至少要有一条 finding 带 path + sha256，指向 product-state/ 下真实存在、非空且哈希一致的工具输出文件（如 dumpbin/DIE/IDA 导出）——只在档案里打字声称做过逆向或 0 字节空文件判失败')
+        }
+    }
+}
+
+# Real-run evidence (硬门). A real VERIFIED/RELEASED must show the product was ACTUALLY launched and gated,
+# with evidence bound to real screenshot/recording files -- not a typed claim. Three kinds are required,
+# each bound like the evidence ledger (path + sha256 -> a real file under product-state/ whose Get-FileHash
+# matches): launch (启动→授权→真实操作→观察), offline_rejected (断网被拒), badkey_rejected (错卡密被拒).
+# A screenshot/recording is far harder to fabricate than a line of text -- the direct counter to opening
+# (a)'s static-gate ceiling -- and it makes the user-testable slice mandatory rather than merely defined.
+$runEvidencePath = Join-Path $stateRoot 'reports/RUN-EVIDENCE.yaml'
+if ($stateStatus -in @('VERIFIED', 'RELEASED')) {
+    if (-not (Test-Path -LiteralPath $runEvidencePath -PathType Leaf)) {
+        $errors.Add('缺少 reports/RUN-EVIDENCE.yaml：真实 VERIFIED/RELEASED 必须真启动一遍成品并留下截图/录屏，以及断网被拒、错卡密被拒的真实证据')
+    }
+    else {
+        $runText = Read-StateText -Path $runEvidencePath
+        $runKinds = @(
+            @{ Key = 'launch'; Why = '启动→授权成功→进入核心→真实操作的截图/录屏' },
+            @{ Key = 'offline_rejected'; Why = '断网/离线按授权档案被拒、未放行核心的截图/录屏' },
+            @{ Key = 'badkey_rejected'; Why = '错误卡密/授权失败被明确拒绝、未进入核心的截图/录屏' }
+        )
+        $boundRunHashes = New-Object System.Collections.Generic.List[string]
+        foreach ($rk in $runKinds) {
+            $boundRunHash = Test-RunEvidenceBound -Text $runText -Kind $rk.Key
+            if ([string]::IsNullOrEmpty($boundRunHash)) {
+                $errors.Add("RUN-EVIDENCE.yaml 的 $($rk.Key)（$($rk.Why)）没有绑定真实文件：需要 path + sha256 指向 product-state/ 下真实存在、非空且哈希一致的截图/录屏——纯文本声称跑过了、或 0 字节空文件判失败")
+            }
+            else {
+                [void]$boundRunHashes.Add($boundRunHash)
+            }
+        }
+        # Three kinds = three distinct observations; one file reused for launch + offline + badkey is not
+        # three real runs. Require the sha256 that did bind to be all-distinct. (RV attack finding F1.)
+        if ($boundRunHashes.Count -ge 2) {
+            $uniqueRunHashes = @($boundRunHashes | Select-Object -Unique)
+            if ($uniqueRunHashes.Count -lt $boundRunHashes.Count) {
+                $errors.Add('RUN-EVIDENCE.yaml 的 launch/offline_rejected/badkey_rejected 绑定了同一个文件：三类真机证据必须是三个互不相同的截图/录屏（sha256 各不相同），一文件多用判失败')
+            }
+        }
+    }
+}
+
+# (License gate intentionally NOT implemented -- user decision.) The source-reuse workflow is "learn the
+# approach, write your own code", not bulk-copying a repo, so upstream license obligations basically do not
+# trigger. Copyright/license is out of scope entirely (no license field anywhere, no gate); only a lightweight
+# supply-chain reminder remains (protect the machine, not copyright), and it never blocks. See SKILL.md.
 
 # Override is not verification (RV-R2 hole B). update-product-state.ps1 -Force can move a product past
 # a gate the evidence does not satisfy; it now records gate_overridden: true on disk. A real
@@ -1103,6 +1290,40 @@ foreach ($file in $textFiles) {
     }
 }
 
+# RV-R2 opening (a): the honest ceiling of a static evidence gate. Every binding above proves a recorded
+# hash matches a file on disk; none can prove that file was really produced by exercising/analysing THIS
+# product rather than authored to match its own recorded hash. So a real VERIFIED/RELEASED is, by default,
+# self-asserted -- and saying so out loud (EVIDENCE-TRUST, below) keeps a green light from reading as
+# "independently proven". -RequireAttestation records a named human endorsing the current status in
+# product-state/attestation/ATTESTATION.yaml. What this block can actually verify is only that the record
+# is complete (a settled approved_by, the matching attested_status, an attested_at) -- it verifies no
+# identity and no signature, and one made-up name defeats it. Labelling that "externally-attested" would
+# be the exact over-claim the self-asserted line exists to prevent, so the label carries its own ceiling:
+# a named endorsement whose identity is NOT verified.
+Enter-CheckGroup 'attestation'
+$attestationTrust = 'n/a'
+if ($stateStatus -in @('VERIFIED', 'RELEASED')) {
+    $attestationPath = Join-Path $stateRoot 'attestation/ATTESTATION.yaml'
+    $attestationValid = $false
+    $attestApprover = ''
+    if (Test-Path -LiteralPath $attestationPath -PathType Leaf) {
+        $attestText = Read-StateText -Path $attestationPath
+        $attestApprover = (Get-YamlScalar -Text $attestText -Key 'approved_by').Trim()
+        $attestStatus = (Get-YamlScalar -Text $attestText -Key 'attested_status').Trim()
+        $attestAt = (Get-YamlScalar -Text $attestText -Key 'attested_at').Trim()
+        $approverSettled = (-not [string]::IsNullOrWhiteSpace($attestApprover)) -and
+            ($attestApprover -notin @('UNVERIFIED', 'PENDING', 'TBD', 'UNKNOWN', 'DISCOVERY_PENDING')) -and
+            ($attestApprover -notmatch '__[A-Z0-9_]+__')
+        if ($approverSettled -and ($attestStatus -eq $stateStatus) -and -not [string]::IsNullOrWhiteSpace($attestAt)) {
+            $attestationValid = $true
+        }
+    }
+    $attestationTrust = if ($attestationValid) { "named-attestation by $attestApprover (identity NOT verified)" } else { 'self-asserted' }
+    if ($RequireAttestation -and -not $attestationValid) {
+        $errors.Add("已要求人工背书(-RequireAttestation)，但缺少有效的 product-state/attestation/ATTESTATION.yaml：需要 approved_by(具名审核人)、attested_status=$stateStatus、attested_at 三项齐全——静态门挡不住哈希自洽的假证据，具名背书是把一个名字押在当前状态上；注意本工具只核对记录完整，不验证签名或身份")
+    }
+}
+
 Enter-CheckGroup ''
 foreach ($warning in $warnings) { Write-Output "WARN: $warning" }
 foreach ($validationError in $errors) { Write-Output "ERROR: $validationError" }
@@ -1114,6 +1335,20 @@ if ($null -ne $lifecycleReadiness) {
     # The scoreboard: the single honest distance-to-goal number, emitted in every state (known or in
     # repair). Computed from evidence, so an agent cannot self-award it; a narrow rung reads low.
     Write-Output "CURRENT-USER-TESTABILITY: $(Get-UserTestability -StateRoot $stateRoot -Status $stateStatus)"
+}
+# RV-R2 opening (a): name the trust level of a real VERIFIED/RELEASED so a green light never reads as
+# "independently proven". self-asserted = the bound evidence is hash-consistent but self-produced (a static
+# gate cannot prove it was really produced by exercising/analysing this product; a determined forger can
+# author a hash-consistent fake). named-attestation = a complete ATTESTATION.yaml names a human endorsing
+# this exact status; the record's completeness is checked, the person's identity/signature is NOT (a fake
+# name produces the same record), and the label says so inline so it can never read as identity-verified.
+if ($stateStatus -in @('VERIFIED', 'RELEASED')) {
+    if ($attestationTrust -eq 'self-asserted') {
+        Write-Output "EVIDENCE-TRUST: self-asserted — 绑定证据哈希自洽但由本流程自产，静态门无法证明它真的来自运行/分析本产品；更高保证需外部签名或具名人工背书（-RequireAttestation）"
+    }
+    else {
+        Write-Output "EVIDENCE-TRUST: $attestationTrust — ATTESTATION.yaml 的具名背书记录完整且指向当前状态，但本静态门不验证签名或身份（一行假名即可写出同样的记录）；它比 self-asserted 多的只是一条具名承诺记录，不是身份核验，更高保证需要真实签名或可信执行"
+    }
 }
 if ($null -ne $lifecycleReadiness -and $lifecycleReadiness.Known) {
     Write-Output "STATE: $($lifecycleReadiness.Status) - $($lifecycleReadiness.Meaning)"
@@ -1141,7 +1376,7 @@ elseif ($null -ne $lifecycleReadiness -and -not $lifecycleReadiness.Known) {
     # the order from prose -- the ISSUE-096 relapse where an unrecognized status left the entry with
     # no next step. Fail loud and machine-readable instead: name the one repair action and the legal
     # values, read from the table so this list can never drift from the source of truth.
-    $legalStatuses = @((Get-LifecycleTable).states | ForEach-Object { [string]$_.status })
+    $legalStatuses = @((Get-LifecycleTable -TableFile $lifecycleFile).states | ForEach-Object { [string]$_.status })
     Write-Output ("STATE_REPAIR_REQUIRED: STATE.yaml 的 status=" + $lifecycleReadiness.Status + " 不在生命周期表里，先修状态再谈下一步")
     Write-Output "NEXT-STATUS: STATE_REPAIR"
     Write-Output "NEXT-ACTION: 用 update-product-state.ps1 把 status 改回下列合法值之一，再重新运行本检查（不要手改 STATE.yaml）"

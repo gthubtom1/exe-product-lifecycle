@@ -68,11 +68,16 @@ foreach ($required in @($statePath, $indexPath)) {
             -Hint '恢复上一个可用备份，或重新运行首次接入补齐模板文件。')
     }
 }
+# Phase 2 track selection: a source-reuse product (track: source) is validated against the source ladder,
+# an EXE/legacy product against the EXE ladder. Read once here so both the -Status sanity check and the
+# forward gate below judge the transition against the right lifecycle table.
+$productTrack = (Get-YamlScalar -Text (Read-TextFileSafe -Path $statePath) -Key 'track').Trim()
+$lifecycleFile = Get-LifecycleTableFileForTrack -Track $productTrack
 if (-not [string]::IsNullOrWhiteSpace($Status)) {
     # Validated against the lifecycle table, not a [ValidateSet] literal: a second hardcoded copy of
     # the status list is the ISSUE-096 drift. Fires only for a non-empty -Status, so -ResumeJournal
     # and blocking-item-only calls are unaffected.
-    $validStatuses = @((Get-LifecycleTable).states | ForEach-Object { [string]$_.status })
+    $validStatuses = @((Get-LifecycleTable -TableFile $lifecycleFile).states | ForEach-Object { [string]$_.status })
     if ($validStatuses -notcontains $Status) {
         throw (New-UserFacingError -Message "不认识的状态: $Status" `
             -Hint ("状态必须是下列之一: " + ($validStatuses -join ', ')))
@@ -184,7 +189,7 @@ try {
     # evidence is exactly the question "am I allowed to claim this".
     $gateOverridden = $false
     if ($targetStatus -ne $fromStatus) {
-        $readiness = Get-LifecycleReadiness -StateRoot $stateRoot -Status $targetStatus
+        $readiness = Get-LifecycleReadiness -StateRoot $stateRoot -Status $targetStatus -TableFile $lifecycleFile
         if (-not $readiness.Known) {
             throw (New-UserFacingError -Message "状态「$targetStatus」不在生命周期状态表里。" `
                 -Hint '只能使用状态表里定义的状态；表在 assets/lifecycle-states.json。')
@@ -275,7 +280,7 @@ try {
 
     Remove-Item -LiteralPath $journalPath -Force
 
-    $after = Get-LifecycleReadiness -StateRoot $stateRoot -Status $targetStatus
+    $after = Get-LifecycleReadiness -StateRoot $stateRoot -Status $targetStatus -TableFile $lifecycleFile
     [pscustomobject]@{
         status = 'updated'
         product_root = $root

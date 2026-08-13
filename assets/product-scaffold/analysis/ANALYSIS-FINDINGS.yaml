@@ -1,0 +1,31 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+# 逆向分析发现记录（提高 EXE 二开能力）。把"用过哪几招逆向、看到了什么、证据在哪"
+# 落成结构化事实，而不是在档案里写一句"分析过了"。
+#
+# 逆向 != 反编译：反编译只是其中一招，而且常常还原不全。下面六类覆盖用户强调的完整逆向面：
+# 反汇编 / 静态看结构·字符串·资源 / 动态调试·行为观察 / 脱壳。
+#
+# 每一类都必须是"一个决定"，不能留 PENDING：
+#   done            = 做了，并在下面 findings 里留了绑定真实工具输出的证据
+#   not_applicable  = 这一类对本产品不适用（例如未加壳就填 unpacking: not_applicable，动态未运行就说明原因）
+#   blocked         = 想做但被挡住（工具缺失/加壳无法脱/签名限制），并在 summary 里写清卡点
+status: "PENDING"                 # PENDING -> ASSESSED（六类都给出决定后才可置 ASSESSED）
+static_structure: "PENDING"       # PE 头/节/架构/编译器/导入导出/依赖/CLR（dumpbin、llvm-readobj、DIE、rabin2）
+static_strings: "PENDING"         # 字符串与交叉引用（strings、IDA/Ghidra 字符串视图）
+static_resources: "PENDING"       # 图标/版本/对话框/嵌入资源（ResourceHacker、rcedit、7z）
+disassembly: "PENDING"            # 关键路径反汇编/反编译结论（IDA/Ghidra/radare2；.NET 用 dnSpy/ILSpy）
+dynamic_behavior: "PENDING"       # 受控运行的行为观察（Procmon、x64dbg/WinDbg、API Monitor、frida）
+unpacking: "PENDING"              # 脱壳：加壳/高熵则记录脱壳或内存转储结果与证据；未加壳填 not_applicable
+# findings：每条发现绑定一个真实的工具输出文件（product-state/ 下、Get-FileHash 与 sha256 一致）。
+# 纯文本声明不算证据——与 EVIDENCE-LEDGER 同一条反捏造规则（静态门挡不住"造一个自洽假文件"，
+# 但"必须留下真实工具输出文件"把门槛从"打字一句"抬到"跑出并保存工具产物"）。
+findings: []
+# findings 示例（真正做逆向时填，删掉本注释按需增删条目）：
+#   - id: f1
+#     technique: static_structure      # 上面六类字段名之一
+#     tool: "dumpbin"
+#     summary: "x64 原生 PE，无 CLR 头，导入 kernel32/user32/gdi32"
+#     path: "product-state/artifacts/analysis/dumpbin-headers.txt"   # 真实工具输出，只读保存
+#     sha256: "<64位十六进制>"
+source_of_truth: "product-state/analysis/ANALYSIS-FINDINGS.yaml"

@@ -1,52 +1,56 @@
 {
   "schema_version": 1,
-  "purpose": "Single source of truth for what each product status means, what evidence it requires, and what the next action is. Read by validate-product-state.ps1 (forward gate) and by the agent when resolving the first unfinished stage, so two agents cannot invent two different orders.",
+  "track": "source",
+  "entry_status": "SOURCE_INTAKE",
+  "purpose": "Source-reuse (二开 from source) entry ladder for Phase 2. The front half (SOURCE_INTAKE -> REFERENCES_GATHERED -> CAPABILITY_MAPPED -> IMPLEMENTED) is source-specific: a user states a need, the agent finds like-kind open-source references, learns their approach (never bulk-merging a repo), and implements it in the user's own project. From CUSTOMIZATION_RECORDED on it MERGES INTO the shared downstream, reusing the exact same states, requirement kinds and validator engine as the EXE track (no second copy of the downstream truth -- the gate suite's SL-parity test asserts the shared-downstream requires here stay byte-for-byte equal to lifecycle-states.json).",
   "settled_rule": "A scaffold field counts as settled when it is present and is not PENDING, UNVERIFIED, UNKNOWN, DISCOVERY_PENDING, TBD or empty. Any value the agent deliberately writes -- including not_applicable -- counts as a decision.",
   "unsettled_values": ["PENDING", "UNVERIFIED", "UNKNOWN", "DISCOVERY_PENDING", "TBD"],
   "states": [
     {
-      "status": "INIT",
+      "status": "SOURCE_INTAKE",
       "order": 0,
-      "meaning": "刚建好档案，还没有分析过这个程序",
-      "next_status": "BASELINE_CREATED",
-      "next_action": "保存并校验原始程序，登记用户交来的全部文件",
-      "requires": []
-    },
-    {
-      "status": "BASELINE_CREATED",
-      "order": 1,
-      "meaning": "原始程序已只读保存并算过校验值，输入已登记",
-      "next_status": "ANALYZED",
-      "next_action": "发现本机工具，分析程序，给出一句话迁移结论",
+      "meaning": "需求已录入：要做什么、成功标准、非目标、是否对外发布都写清了",
+      "next_status": "REFERENCES_GATHERED",
+      "next_action": "写清需求(source/SOURCE-INTAKE.yaml 的 status 置 DEFINED)，再联网找同类开源参考并登记",
       "requires": [
-        { "kind": "file_present", "path": "artifacts/BASELINE-MANIFEST.yaml", "why": "原始程序的保存位置和校验值还没有记录" },
-        { "kind": "file_present", "path": "artifacts/INPUT-MANIFEST.yaml", "why": "用户交来的文件清单还没有登记" }
+        { "kind": "file_present", "path": "source/SOURCE-INTAKE.yaml", "why": "还没有需求录入文件——先建 source/SOURCE-INTAKE.yaml 写清要做什么、成功长什么样、非目标、是否对外发布" }
       ]
     },
     {
-      "status": "ANALYZED",
-      "order": 2,
-      "meaning": "程序已经分析过，已给出可否自动迁移的结论",
-      "next_status": "CUSTOMIZATION_RECORDED",
-      "next_action": "把要保留和要修改的品牌、界面、联系方式、功能逐条写成可复用规则",
+      "status": "REFERENCES_GATHERED",
+      "order": 1,
+      "meaning": "需求已录入，且同类开源参考已登记、可追溯",
+      "next_status": "CAPABILITY_MAPPED",
+      "next_action": "把需求拆成能力，并标注各能力参考了谁的写法（不是整包复制）",
       "requires": [
-        { "kind": "file_present", "path": "tooling/TOOL-INVENTORY.md", "why": "还没有记录本机可用的分析工具" },
-        { "kind": "yaml_settled", "path": "PROTECTION-PROFILE.yaml", "key": "status", "why": "还没有探测目标的保护机制（加壳/自校验/反调试/签名）——能不能改、能不能加固都取决于它，运行 detect-protections.ps1；确认无保护可填 not_applicable" },
-        { "kind": "file_present", "path": "analysis/ANALYSIS-FINDINGS.yaml", "why": "还没有建立逆向分析发现记录——分析阶段必须把反汇编/静态结构·字符串·资源/动态行为/脱壳这几招用过哪些、看到了什么落成结构化事实，而不是只写一句结论" },
-        { "kind": "yaml_settled", "path": "analysis/ANALYSIS-FINDINGS.yaml", "key": "status", "why": "逆向分析发现记录还停在待定；反汇编/静态结构·字符串·资源/动态行为/脱壳六类每类都要给出决定（done/not_applicable/blocked）后把 status 置 ASSESSED" },
-        { "kind": "yaml_settled", "path": "analysis/ANALYSIS-FINDINGS.yaml", "key": "static_structure", "why": "逆向六类未逐类决定：静态结构 (static_structure) 还停在待定——用 dumpbin/DIE/llvm-readobj 看过 PE 头/节/架构/导入导出后给出 done/not_applicable/blocked，只把总 status 置 ASSESSED 不算" },
-        { "kind": "yaml_settled", "path": "analysis/ANALYSIS-FINDINGS.yaml", "key": "static_strings", "why": "逆向六类未逐类决定：字符串与交叉引用 (static_strings) 还停在待定——扫过字符串/交叉引用后给出 done/not_applicable/blocked" },
-        { "kind": "yaml_settled", "path": "analysis/ANALYSIS-FINDINGS.yaml", "key": "static_resources", "why": "逆向六类未逐类决定：资源 (static_resources) 还停在待定——看过图标/版本/对话框/嵌入资源后给出 done/not_applicable/blocked" },
-        { "kind": "yaml_settled", "path": "analysis/ANALYSIS-FINDINGS.yaml", "key": "disassembly", "why": "逆向六类未逐类决定：关键路径反汇编/反编译 (disassembly) 还停在待定——用 IDA/Ghidra/radare2（.NET 用 dnSpy/ILSpy）后给出 done/not_applicable/blocked" },
-        { "kind": "yaml_settled", "path": "analysis/ANALYSIS-FINDINGS.yaml", "key": "dynamic_behavior", "why": "逆向六类未逐类决定：动态行为 (dynamic_behavior) 还停在待定——受控运行观察（Procmon/x64dbg/frida）后给出 done/not_applicable/blocked" },
-        { "kind": "yaml_settled", "path": "analysis/ANALYSIS-FINDINGS.yaml", "key": "unpacking", "why": "逆向六类未逐类决定：脱壳 (unpacking) 还停在待定——加壳/高熵记录脱壳或内存转储，未加壳填 not_applicable" },
-        { "kind": "unpacking_consistent_with_protection", "path": "analysis/ANALYSIS-FINDINGS.yaml", "why": "PROTECTION-PROFILE 判目标为加壳/高熵，unpacking 却填了 not_applicable——脱壳必须是显式动作：done（已脱壳/内存转储并留证据）或 blocked（尝试过但被挡），不能拿 not_applicable 蒙混" },
-        { "kind": "text_contains_any", "path": "PRODUCT-DOSSIER.md", "values": ["可自动迁移", "部分内容需要确认", "需要重新实现"], "why": "产品档案里还没有写出首次分析的一句话结论" }
+        { "kind": "yaml_settled", "path": "source/SOURCE-INTAKE.yaml", "key": "status", "why": "需求录入还停在待定——写清目标/成功标准/非目标后把 status 置 DEFINED" },
+        { "kind": "file_present", "path": "source/REFERENCE-INVENTORY.yaml", "why": "还没有参考登记表——建 source/REFERENCE-INVENTORY.yaml 作为记录同类开源参考的地方；url/commit 可选(有就记、方便自己回溯)，不做缺失必红的硬门" }
+      ]
+    },
+    {
+      "status": "CAPABILITY_MAPPED",
+      "order": 2,
+      "meaning": "需求已拆成能力，每个能力标注了参考来源与自实现方式",
+      "next_status": "IMPLEMENTED",
+      "next_action": "在自己项目里实现这些能力，绑定真实构建产物与运行证据",
+      "requires": [
+        { "kind": "list_records_have_fields", "path": "source/CAPABILITY-MAP.yaml", "key": "capabilities", "fields": ["self_implementation"], "why": "能力映射不完整——每个能力都要写清 self_implementation(自己在本项目怎么实现)，证明是'学思路自己写'而非整包搬运；reference_ids 可选(想记参考了谁就记)" }
+      ]
+    },
+    {
+      "status": "IMPLEMENTED",
+      "order": 3,
+      "meaning": "已在自己项目里实现并绑定真实构建/运行证据",
+      "next_status": "CUSTOMIZATION_RECORDED",
+      "next_action": "把定制写成可复用规则，进入与 EXE 二开共享的下游（定制/授权/构建/验证/发布/回滚）",
+      "requires": [
+        { "kind": "yaml_settled", "path": "source/CAPABILITY-MAP.yaml", "key": "status", "why": "能力实现映射还停在待定——每个能力要给出自实现方式与证据指针后才算实现" },
+        { "kind": "yaml_settled", "path": "EVIDENCE-LEDGER.yaml", "key": "status", "why": "构建/运行证据台账还停在待定——没有证据不能声称功能做好（真实绑定在下游 VERIFIED 门强制）" }
       ]
     },
     {
       "status": "CUSTOMIZATION_RECORDED",
-      "order": 3,
+      "order": 4,
       "meaning": "定制内容已经写成规则，维护方式已经选定",
       "next_status": "AUTH_HANDOFF_READY",
       "next_action": "整理这个程序的授权现状，写出给授权平台的交接资料",
@@ -58,7 +62,7 @@
     },
     {
       "status": "AUTH_HANDOFF_READY",
-      "order": 4,
+      "order": 5,
       "meaning": "给授权平台的交接资料已备好，但平台还没有回合同",
       "next_status": "AUTH_CONTRACT_READY",
       "next_action": "等授权平台返回合同，然后确定启动器到主程序的启动契约",
@@ -69,7 +73,7 @@
     },
     {
       "status": "AUTH_CONTRACT_READY",
-      "order": 5,
+      "order": 6,
       "meaning": "启动器与主程序的启动和授权契约已经确定",
       "next_status": "BUILD_READY",
       "next_action": "补齐运营、证据、网络数据、宿主集成和输入安全五项政策，并确定工具方案",
@@ -80,7 +84,7 @@
     },
     {
       "status": "BUILD_READY",
-      "order": 6,
+      "order": 7,
       "meaning": "资料齐了，可以开始构建候选版本",
       "next_status": "VERIFIED",
       "next_action": "构建候选包，按测试矩阵逐条验证，并留下可运行的回滚路径",
@@ -98,7 +102,7 @@
     },
     {
       "status": "VERIFIED_SIMULATION",
-      "order": 7,
+      "order": 8,
       "meaning": "用样例数据跑通了全流程，不是真实产品验证",
       "next_status": "VERIFIED",
       "next_action": "换成真实程序和真实授权，重新跑一遍测试矩阵",
@@ -106,7 +110,7 @@
     },
     {
       "status": "VERIFIED",
-      "order": 8,
+      "order": 9,
       "meaning": "候选版本已经过真实验证，可以准备发布",
       "next_status": "RELEASED",
       "next_action": "生成发布请求，等平台返回登记记录后才算已发布",
@@ -114,7 +118,7 @@
     },
     {
       "status": "RELEASED",
-      "order": 9,
+      "order": 10,
       "meaning": "平台已经登记并放行了这个版本",
       "next_status": "",
       "next_action": "等待下一个上游新版本，或按用户要求回滚",

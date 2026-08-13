@@ -95,10 +95,12 @@ product-state/auth/
 └── LAUNCH-CONTRACT.yaml
 ```
 
+`AUTH-ADAPTER-REQUEST.md` 顶部必须带一个机读摘要块（fenced `yaml`），键为 `binding_summary`，含 `claimed_tier` / `verified_tier` / `bypass_risk` 三个字段，让授权平台闸门可以直接机读启动器↔核心的绑定级别，不必解析整篇文档。这三个字段必须与 `auth/LAUNCH-CONTRACT.yaml` 的 `binding_strength` 逐字一致：A/B/C 判级的唯一真相源与证据校验仍在 `LAUNCH-CONTRACT.yaml`（本块只做呈现/传递，不参与判级，也不得在此另报比 `LAUNCH-CONTRACT.yaml` 更高的级别）。
+
 建议提示语：
 
 ```text
-请读取这个产品目录的 product-state/auth/，为 product_id 对应的 EXE 生成统一授权系统合同和产品专属适配说明。只使用文件中有证据的事实；未知项保留为 UNVERIFIED；不要把本产品字段写成所有产品的默认字段；返回 AUTH-CONTRACT-RESULT.yaml、AUTH-ADAPTER-SPEC.md 和联调测试清单。
+请读取这个产品目录的 product-state/auth/，为 product_id 对应的 EXE 生成统一授权系统合同和产品专属适配说明。只使用文件中有证据的事实；未知项保留为 UNVERIFIED；不要把本产品字段写成所有产品的默认字段；返回 AUTH-CONTRACT-RESULT.yaml、AUTH-ADAPTER-SPEC.md 和联调测试清单。AUTH-ADAPTER-REQUEST.md 顶部的 binding_summary 机读块给出的 claimed_tier/verified_tier/bypass_risk 以 LAUNCH-CONTRACT.yaml 的 binding_strength 为准。
 ```
 
 授权系统 Agent 返回：

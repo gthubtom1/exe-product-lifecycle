@@ -1,0 +1,17 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+product_name: "__PRODUCT_NAME__"
+track: "source"
+status: "SOURCE_INTAKE"
+mode: "bootstrap"
+current_customization_version: "0.1.0"
+current_adapter_version: "UNVERIFIED"
+maintenance_strategy: "UNKNOWN"
+last_modified_artifact: "UNVERIFIED"
+last_patch_or_diff: "UNVERIFIED"
+last_verification_record: "UNVERIFIED"
+rollback_runbook: "product-state/rollback/ROLLBACK-RUNBOOK.md"
+last_verified_at: "UNVERIFIED"
+gate_overridden: false
+next_action: "录入需求(source/SOURCE-INTAKE.yaml)，再联网找同类开源参考并登记"
+blocking_items: []

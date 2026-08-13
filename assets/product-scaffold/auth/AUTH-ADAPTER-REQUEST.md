@@ -1,5 +1,16 @@
 # 授权系统适配请求
 
+<!-- machine-readable summary: 授权平台闸门可直接机读本块，拿到启动器↔核心的绑定级别。三个字段必须与
+     auth/LAUNCH-CONTRACT.yaml 的 binding_strength 逐字一致；A/B/C 判级的唯一真相源与证据校验仍在
+     LAUNCH-CONTRACT.yaml，本块只做呈现/传递，不参与判级，也不得在此另报更高级别。 -->
+
+```yaml
+binding_summary:
+  claimed_tier: "UNKNOWN"       # A | B | C | UNKNOWN，取自 LAUNCH-CONTRACT.yaml binding_strength.claimed_tier
+  verified_tier: "UNVERIFIED"   # 实测真正达到的级别，取自 binding_strength.verified_tier
+  bypass_risk: "UNVERIFIED"     # 一句话说清该级别下核心怎么被绕过，取自 binding_strength.bypass_risk
+```
+
 ## 产品
 
 - `product_id`: `__PRODUCT_ID__`

@@ -359,6 +359,27 @@ $rbHash = (Get-FileHash -LiteralPath (Join-Path $rbPkgDir 'prev-release.bin') -A
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'RB4-real-package-clears-binding' -Text $run.Text -Pattern '没有对应任何已保存的回滚包' -Absent
 Assert-Match -Name 'RB4-runbook-fully-clears' -Text $run.Text -Pattern 'ROLLBACK-RUNBOOK\.md' -Absent
+# RB5 -- N1 hardening: a 0-byte rollback package (sha256 = empty-file constant) is not a real rollback
+# target. Point the runbook only at an empty file's hash -> must be caught. Revert the 0-byte skip in the
+# rollback binding of validate-product-state.ps1 and this goes red.
+$rbEmpty = Join-Path $rbPkgDir 'empty-rb.bin'
+[IO.File]::WriteAllText($rbEmpty, '', (New-Object Text.UTF8Encoding($false)))
+$rbEmptyHash = (Get-FileHash -LiteralPath $rbEmpty -Algorithm SHA256).Hash
+[IO.File]::WriteAllText($rb, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $rb) -replace $rbHash, $rbEmptyHash), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RB5-empty-rollback-package-caught' -Text $run.Text -Pattern '没有对应任何已保存的回滚包'
+
+# NE -- N-EPLC-5 hardening: the product body itself (core/baseline) must not be a 0-byte empty file. Init a
+# product whose core is literally 0 bytes (init-product records baseline_sha256 = the empty-file constant),
+# force VERIFIED, and validate must catch the empty baseline. Revert the empty-constant baseline check in
+# validate-product-state.ps1 (state-identity) and this goes red.
+$neRoot = Join-Path $FixtureRoot 'ne-empty-core'
+New-Item -ItemType Directory -Force -Path $neRoot | Out-Null
+[IO.File]::WriteAllText((Join-Path $neRoot 'demo.exe'), '', (New-Object Text.UTF8Encoding($false)))
+$null = Invoke-Script -Name 'init-product.ps1' -ScriptArgs @('-ProductRoot', $neRoot, '-ProductId', 'ne-product', '-CorePath', (Join-Path $neRoot 'demo.exe'))
+Set-Status -Root $neRoot -Status 'VERIFIED'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $neRoot)
+Assert-Match -Name 'NE1-empty-core-baseline-caught' -Text $run.Text -Pattern 'baseline_sha256 是空文件常量'
 
 # EL -- evidence ledger is real, not decorative (RV-C-G4). A forged VERIFIED with entries: [] must be
 # caught; adding one static_present entry clears the empty check but NOT the runtime-level check;
@@ -394,6 +415,311 @@ $ledgerBody = "entries:`n  - id: e1`n    evidence_level: dynamic_success`n    pa
 [IO.File]::WriteAllText($ledger, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $ledger) -replace '(?s)entries:.*?(?=\r?\nrules:)', $ledgerBody), (New-Object Text.UTF8Encoding($false)))
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'EB2-real-artifact-clears-binding' -Text $run.Text -Pattern '没有绑定真实产物' -Absent
+# EB3 -- F1 hardening: a 0-byte evidence file is not a real artifact. Binding the ledger to an empty file
+# must NOT clear the gate. Revert the non-empty check in Test-BoundEvidenceFile and this goes red.
+[IO.File]::WriteAllText((Join-Path $evidenceDir 'empty-run.bin'), '', (New-Object Text.UTF8Encoding($false)))
+$emptyEvidenceHash = (Get-FileHash -LiteralPath (Join-Path $evidenceDir 'empty-run.bin') -Algorithm SHA256).Hash
+$ledgerZeroBody = "entries:`n  - id: e1`n    evidence_level: dynamic_success`n    path: `"product-state/artifacts/verification/empty-run.bin`"`n    sha256: `"$emptyEvidenceHash`""
+[IO.File]::WriteAllText($ledger, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $ledger) -replace '(?s)entries:.*?(?=\r?\nrules:)', $ledgerZeroBody), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'EB3-empty-file-evidence-caught' -Text $run.Text -Pattern '没有绑定真实产物'
+
+# AF -- reverse-engineering findings must be real, not typed (提高 EXE 二开 + 反捏造, mirrors EB). Forging
+# VERIFIED with empty findings must be caught; a text-only finding (path/sha256 pointing at nothing) must
+# be caught; a finding bound to a real hash-consistent tool output clears exactly this gate. Delete the
+# ANALYSIS-FINDINGS binding block in validate-product-state.ps1 and the first two assertions go red;
+# make the gate impossible to satisfy and the last (Absent) assertion goes red.
+$root = New-Fixture -Name 'af-analysis-findings'
+Set-Status -Root $root -Status 'VERIFIED'
+$findings = Join-Path $root 'product-state\analysis\ANALYSIS-FINDINGS.yaml'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'AF1-empty-findings-caught' -Text $run.Text -Pattern 'findings 为空'
+$afTextOnly = "findings:`n  - id: f1`n    technique: static_structure`n    path: `"product-state/artifacts/analysis/nope.txt`"`n    sha256: `"$('a' * 64)`""
+[IO.File]::WriteAllText($findings, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $findings) -replace 'findings: \[\]', $afTextOnly), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'AF2-empty-cleared' -Text $run.Text -Pattern 'findings 为空' -Absent
+Assert-Match -Name 'AF2-text-only-finding-caught' -Text $run.Text -Pattern '没有落到真实工具输出'
+$afDir = Join-Path $root 'product-state\artifacts\analysis'
+New-Item -ItemType Directory -Force -Path $afDir | Out-Null
+[IO.File]::WriteAllText((Join-Path $afDir 'dumpbin-headers.txt'), 'FILE HEADER VALUES: machine (x64), 6 number of sections', (New-Object Text.UTF8Encoding($false)))
+$afHash = (Get-FileHash -LiteralPath (Join-Path $afDir 'dumpbin-headers.txt') -Algorithm SHA256).Hash
+$afBody = "findings:`n  - id: f1`n    technique: static_structure`n    tool: dumpbin`n    path: `"product-state/artifacts/analysis/dumpbin-headers.txt`"`n    sha256: `"$afHash`""
+[IO.File]::WriteAllText($findings, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $findings) -replace '(?s)findings:.*?(?=\r?\nsource_of_truth:)', $afBody), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'AF3-real-artifact-clears-binding' -Text $run.Text -Pattern '没有落到真实工具输出' -Absent
+# AF4 -- F1 hardening: a 0-byte tool-output file is not a real finding. Binding to an empty file must NOT
+# clear the gate. Revert the non-empty check in Test-BoundEvidenceFile and this goes red.
+[IO.File]::WriteAllText((Join-Path $afDir 'empty-dump.txt'), '', (New-Object Text.UTF8Encoding($false)))
+$emptyFindingHash = (Get-FileHash -LiteralPath (Join-Path $afDir 'empty-dump.txt') -Algorithm SHA256).Hash
+$afZeroBody = "findings:`n  - id: f1`n    technique: static_structure`n    tool: dumpbin`n    path: `"product-state/artifacts/analysis/empty-dump.txt`"`n    sha256: `"$emptyFindingHash`""
+[IO.File]::WriteAllText($findings, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $findings) -replace '(?s)findings:.*?(?=\r?\nsource_of_truth:)', $afZeroBody), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'AF4-empty-file-finding-caught' -Text $run.Text -Pattern '没有落到真实工具输出'
+
+# AN -- 六类逆向必须逐类决定 (opening b). ANALYZED used to gate only ANALYSIS-FINDINGS' overall status, so an
+# agent could type status: ASSESSED while disassembly/dynamic_behavior/unpacking stayed PENDING -- the
+# "reverse engineering was done" claim the gate accepted was a lie. Each of the six category fields is now
+# its own yaml_settled requirement: leaving any one PENDING must be named; settling it clears exactly that
+# line. Delete a category requirement from lifecycle-states.json and AN1 goes red; make it unsatisfiable and
+# AN2 goes red (mutation guard against a gate stuck always-firing).
+$root = New-Fixture -Name 'an-findings-per-category'
+Set-Status -Root $root -Status 'ANALYZED'
+$af = Join-Path $root 'product-state\analysis\ANALYSIS-FINDINGS.yaml'
+$afText = Get-Content -Raw -Encoding UTF8 -LiteralPath $af
+$afText = $afText -replace '(?m)^status:.*$', 'status: "ASSESSED"'
+foreach ($k in @('static_structure', 'static_strings', 'static_resources', 'dynamic_behavior', 'unpacking')) {
+    $afText = [regex]::Replace($afText, ('(?m)^(' + $k + '):.*$'), ('$1: "done"'))
+}
+[IO.File]::WriteAllText($af, $afText, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'AN1-missing-category-caught' -Text $run.Text -Pattern '\(disassembly\)'
+[IO.File]::WriteAllText($af, ([regex]::Replace($afText, '(?m)^(disassembly):.*$', '$1: "done"')), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'AN2-category-settled-clears' -Text $run.Text -Pattern '\(disassembly\)' -Absent
+
+# CU -- 脱壳是动作不是探测 (opening c). detect-protections only *detects* packing; nothing tied that detection
+# to the unpacking decision, so a packed target (WRAPPER_ONLY / high entropy / named packer) could still
+# mark unpacking: not_applicable and pass ANALYZED. unpacking_consistent_with_protection now forces a packed
+# target's unpacking to be done or blocked. CU1: packed + not_applicable must be named; CU2: flipping it to
+# done clears exactly that line; CU3: a not-packed target may keep not_applicable (mutation guard against a
+# rule stuck always-firing). Delete the requirement/kind and CU1 goes red; make it fire on clean and CU3 does.
+$cuPacked = @'
+schema_version: 1
+product_id: "suite-product"
+status: "ASSESSED"
+packing:
+  detector: "DIE"
+  packer: "UPX(4.0)[NRV,best]"
+  entropy_total: "7.95"
+modifiability:
+  verdict: "WRAPPER_ONLY"
+  reason: "packed"
+'@
+$cuClean = @'
+schema_version: 1
+product_id: "suite-product"
+status: "ASSESSED"
+packing:
+  detector: "DIE"
+  packer: "none-detected"
+  entropy_total: "5.10"
+modifiability:
+  verdict: "CAN_PATCH"
+  reason: "clean"
+'@
+function Set-CuFindings {
+    param([string]$Root, [string]$Unpacking)
+    $af = Join-Path $Root 'product-state\analysis\ANALYSIS-FINDINGS.yaml'
+    $t = Get-Content -Raw -Encoding UTF8 -LiteralPath $af
+    $t = $t -replace '(?m)^status:.*$', 'status: "ASSESSED"'
+    foreach ($k in @('static_structure', 'static_strings', 'static_resources', 'disassembly', 'dynamic_behavior')) {
+        $t = [regex]::Replace($t, ('(?m)^(' + $k + '):.*$'), ('$1: "done"'))
+    }
+    $t = [regex]::Replace($t, '(?m)^(unpacking):.*$', ('$1: "' + $Unpacking + '"'))
+    [IO.File]::WriteAllText($af, $t, (New-Object Text.UTF8Encoding($false)))
+}
+$root = New-Fixture -Name 'cu-unpack-packed-na'
+Set-Status -Root $root -Status 'ANALYZED'
+[IO.File]::WriteAllText((Join-Path $root 'product-state\PROTECTION-PROFILE.yaml'), $cuPacked, (New-Object Text.UTF8Encoding($false)))
+Set-CuFindings -Root $root -Unpacking 'not_applicable'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'CU1-packed-na-caught' -Text $run.Text -Pattern '脱壳必须是显式动作'
+Set-CuFindings -Root $root -Unpacking 'done'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'CU2-packed-done-clears' -Text $run.Text -Pattern '脱壳必须是显式动作' -Absent
+$root = New-Fixture -Name 'cu-unpack-clean-na'
+Set-Status -Root $root -Status 'ANALYZED'
+[IO.File]::WriteAllText((Join-Path $root 'product-state\PROTECTION-PROFILE.yaml'), $cuClean, (New-Object Text.UTF8Encoding($false)))
+Set-CuFindings -Root $root -Unpacking 'not_applicable'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'CU3-clean-na-not-flagged' -Text $run.Text -Pattern '脱壳必须是显式动作' -Absent
+
+# TR/AT -- opening (a): a static gate cannot prove a hash-consistent bound artifact was really produced by
+# exercising the product (a determined forger authors a matching fake). Two honest responses. TR: a real
+# VERIFIED/RELEASED emits EVIDENCE-TRUST: self-asserted so a green light never reads as independently proven;
+# a fresh INIT emits no such line (guard against always-emitting). AT: -RequireAttestation opts into a named
+# human endorsement -- without a valid product-state/attestation/ATTESTATION.yaml a real VERIFIED is refused
+# under the flag (AT1); a complete attestation clears it (AT2); WITHOUT the flag the attestation is not
+# required, so the default zero-config flow is unchanged (AT3, mutation guard). The attestation block only
+# reads a name from a YAML file -- it verifies no identity and no signature, and this very test writes a
+# made-up 张三 that clears it -- so the earned trust line must NOT claim "externally-attested" (one fake
+# name would buy that strong claim); it must name the approver AND carry "identity NOT verified" inline.
+# Re-label it back to externally-attested and AT2-no-external-claim reds; drop the honest ceiling from the
+# label and AT2-identity-not-verified-marked reds.
+$root = New-Fixture -Name 'tr-evidence-trust'
+Set-Status -Root $root -Status 'VERIFIED'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'TR1-verified-marks-self-asserted' -Text $run.Text -Pattern '(?m)^EVIDENCE-TRUST: self-asserted'
+$root = New-Fixture -Name 'tr-fresh-no-trust-line'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'TR2-fresh-has-no-trust-line' -Text $run.Text -Pattern '(?m)^EVIDENCE-TRUST:' -Absent
+
+$root = New-Fixture -Name 'at-attestation-gate'
+Set-Status -Root $root -Status 'VERIFIED'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-RequireAttestation')
+Assert-Match -Name 'AT1-require-attestation-missing-caught' -Text $run.Text -Pattern '已要求人工背书'
+$attDir = Join-Path $root 'product-state\attestation'
+New-Item -ItemType Directory -Force -Path $attDir | Out-Null
+[IO.File]::WriteAllText((Join-Path $attDir 'ATTESTATION.yaml'), "schema_version: 1`napproved_by: `"张三 <zhangsan@example.com>`"`nattested_status: `"VERIFIED`"`nattested_at: `"2026-08-13`"`n", (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-RequireAttestation')
+Assert-Match -Name 'AT2-valid-attestation-clears' -Text $run.Text -Pattern '已要求人工背书' -Absent
+Assert-Match -Name 'AT2-trust-names-approver' -Text $run.Text -Pattern '(?m)^EVIDENCE-TRUST: named-attestation by 张三'
+Assert-Match -Name 'AT2-no-external-claim' -Text $run.Text -Pattern 'externally-attested' -Absent
+Assert-Match -Name 'AT2-identity-not-verified-marked' -Text $run.Text -Pattern 'identity NOT verified'
+$root = New-Fixture -Name 'at-attestation-off-by-default'
+Set-Status -Root $root -Status 'VERIFIED'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'AT3-not-required-without-flag' -Text $run.Text -Pattern '已要求人工背书' -Absent
+
+# RG -- RELEASED 需平台登记回执，不能只凭自写发布请求 (opening d, prose-vs-gate). RELEASED used to need only a
+# self-written RELEASE-PUBLISH-REQUEST.md plus a self-set manifest status, with zero platform-response
+# evidence -- yet the skill's own prose says a local candidate is not released until the platform returns a
+# record. RELEASED now also requires a settled registration_id in release/RELEASE-REGISTRATION.yaml: forging
+# RELEASED without it must be named (RG1); adding the registration record clears exactly that line (RG2,
+# mutation guard). Delete the requirement from lifecycle-states.json and RG1 goes red.
+$root = New-Fixture -Name 'rg-release-registration'
+Set-Status -Root $root -Status 'RELEASED'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RG1-missing-registration-caught' -Text $run.Text -Pattern '平台登记回执'
+[IO.File]::WriteAllText((Join-Path $root 'product-state\release\RELEASE-REGISTRATION.yaml'), "schema_version: 1`nregistration_id: `"PLAT-2026-000123`"`nregistered_at: `"2026-08-13`"`n", (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RG2-registration-present-clears' -Text $run.Text -Pattern '平台登记回执' -Absent
+
+# RE -- 真机运行证据硬门 (用户加需求). A real VERIFIED/RELEASED must bind screenshot/recording evidence of an
+# ACTUAL launch + offline-rejected + bad-key-rejected, not a typed claim. Empty (RE1) and text-only pointing
+# at files that do not exist (RE2) must be caught; binding all three to real hash-consistent files clears
+# (RE3, mutation guard). A screenshot is far harder to forge than a line of text -- the direct counter to the
+# static-gate fabrication ceiling. Delete the gate in validate-product-state.ps1 and RE1 goes red; make it
+# impossible to satisfy and RE3 goes red.
+$root = New-Fixture -Name 're-run-evidence'
+Set-Status -Root $root -Status 'VERIFIED'
+$reFile = Join-Path $root 'product-state\reports\RUN-EVIDENCE.yaml'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RE1-empty-run-evidence-caught' -Text $run.Text -Pattern 'RUN-EVIDENCE\.yaml 的 launch'
+$reTextOnly = @"
+schema_version: 1
+product_id: "suite-product"
+launch:
+  summary: "launched"
+  path: "product-state/artifacts/verification/launch.png"
+  sha256: "$('a' * 64)"
+offline_rejected:
+  summary: "offline"
+  path: "product-state/artifacts/verification/offline.png"
+  sha256: "$('b' * 64)"
+badkey_rejected:
+  summary: "badkey"
+  path: "product-state/artifacts/verification/badkey.png"
+  sha256: "$('c' * 64)"
+"@
+[IO.File]::WriteAllText($reFile, $reTextOnly, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RE2-text-only-run-evidence-caught' -Text $run.Text -Pattern '没有绑定真实文件'
+$reDir = Join-Path $root 'product-state\artifacts\verification'
+New-Item -ItemType Directory -Force -Path $reDir | Out-Null
+$reHashes = @{}
+foreach ($n in @('launch', 'offline', 'badkey')) {
+    $f = Join-Path $reDir "$n.png"
+    [IO.File]::WriteAllText($f, "screenshot bytes for $n run", (New-Object Text.UTF8Encoding($false)))
+    $reHashes[$n] = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash
+}
+$reBound = @"
+schema_version: 1
+product_id: "suite-product"
+launch:
+  summary: "launched"
+  path: "product-state/artifacts/verification/launch.png"
+  sha256: "$($reHashes['launch'])"
+offline_rejected:
+  summary: "offline"
+  path: "product-state/artifacts/verification/offline.png"
+  sha256: "$($reHashes['offline'])"
+badkey_rejected:
+  summary: "badkey"
+  path: "product-state/artifacts/verification/badkey.png"
+  sha256: "$($reHashes['badkey'])"
+"@
+[IO.File]::WriteAllText($reFile, $reBound, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RE3-bound-run-evidence-clears' -Text $run.Text -Pattern '没有绑定真实文件' -Absent
+# RE4/RE5 -- F1 hardening. A 0-byte file is not a screenshot: binding a run kind to an empty file must be
+# caught (RE4). Reusing one file for all three kinds is not three real runs: it must be caught (RE5). Revert
+# the non-empty check in Test-BoundEvidenceFile and RE4 goes red; revert the distinct-hash check and RE5 goes red.
+$reZero = Join-Path $reDir 'zero.png'
+[IO.File]::WriteAllText($reZero, '', (New-Object Text.UTF8Encoding($false)))
+$reZeroHash = (Get-FileHash -LiteralPath $reZero -Algorithm SHA256).Hash
+$reZeroBody = @"
+schema_version: 1
+product_id: "suite-product"
+launch:
+  summary: "launched"
+  path: "product-state/artifacts/verification/zero.png"
+  sha256: "$reZeroHash"
+offline_rejected:
+  summary: "offline"
+  path: "product-state/artifacts/verification/offline.png"
+  sha256: "$($reHashes['offline'])"
+badkey_rejected:
+  summary: "badkey"
+  path: "product-state/artifacts/verification/badkey.png"
+  sha256: "$($reHashes['badkey'])"
+"@
+[IO.File]::WriteAllText($reFile, $reZeroBody, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RE4-empty-file-run-evidence-caught' -Text $run.Text -Pattern '没有绑定真实文件'
+$reSameBody = @"
+schema_version: 1
+product_id: "suite-product"
+launch:
+  summary: "launched"
+  path: "product-state/artifacts/verification/launch.png"
+  sha256: "$($reHashes['launch'])"
+offline_rejected:
+  summary: "offline"
+  path: "product-state/artifacts/verification/launch.png"
+  sha256: "$($reHashes['launch'])"
+badkey_rejected:
+  summary: "badkey"
+  path: "product-state/artifacts/verification/launch.png"
+  sha256: "$($reHashes['launch'])"
+"@
+[IO.File]::WriteAllText($reFile, $reSameBody, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RE5-same-file-three-kinds-caught' -Text $run.Text -Pattern '三个互不相同'
+# RE6 -- F2 hardening: evidence must live under product-state/, not just anywhere in the product root. Bind
+# launch to a real non-empty file at the PRODUCT ROOT (outside product-state/) -> must be caught. Revert the
+# state-root containment in Test-BoundEvidenceFile and this goes red.
+$reRootFile = Join-Path $root 'rootproof.png'
+[IO.File]::WriteAllText($reRootFile, 'screenshot bytes at product root', (New-Object Text.UTF8Encoding($false)))
+$reRootHash = (Get-FileHash -LiteralPath $reRootFile -Algorithm SHA256).Hash
+$reRootBody = @"
+schema_version: 1
+product_id: "suite-product"
+launch:
+  summary: "launched"
+  path: "rootproof.png"
+  sha256: "$reRootHash"
+offline_rejected:
+  summary: "offline"
+  path: "product-state/artifacts/verification/offline.png"
+  sha256: "$($reHashes['offline'])"
+badkey_rejected:
+  summary: "badkey"
+  path: "product-state/artifacts/verification/badkey.png"
+  sha256: "$($reHashes['badkey'])"
+"@
+[IO.File]::WriteAllText($reFile, $reRootBody, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'RE6-evidence-outside-state-root-caught' -Text $run.Text -Pattern '没有绑定真实文件'
+
+# AR -- 授权交接『呈现层』机读摘要 (用户加需求 2). AUTH-ADAPTER-REQUEST now carries a top binding_summary block
+# (claimed_tier/verified_tier/bypass_risk) so the authorization platform gate can machine-read the launcher↔
+# core binding tier without parsing the whole doc. This is presentation only: the sole grading source and
+# evidence check for A/B/C is still Test-BindingStrengthEvidence over LAUNCH-CONTRACT.yaml (untouched), so
+# BS1/BS2/BS3 above must stay green. Remove the machine-readable block and AR1 goes red; touch the grading
+# logic and the BS trio goes red -- the two together guard "presentation added, logic unchanged".
+$arScaffold = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $script:Skill 'assets\product-scaffold\auth\AUTH-ADAPTER-REQUEST.md')
+Assert-Match -Name 'AR1-adapter-request-machine-readable-tiers' -Text $arScaffold -Pattern '(?s)binding_summary.*claimed_tier.*verified_tier.*bypass_risk'
 
 # GO -- override is not verification (RV-R2 hole B). A -Force transition must leave gate_overridden:
 # true ON DISK (not only in the JSON), and a real VERIFIED/RELEASED carrying that mark must be refused
@@ -647,6 +973,144 @@ Add-Result -Name 'L1-main-path-reaches-released' -Passed $reachedReleased -Expec
 $laddered = @($states | Where-Object { $null -ne $_.order })
 $duplicated = @($laddered | Group-Object { [int]$_.order } | Where-Object { $_.Count -gt 1 } | ForEach-Object { ('order {0}: {1}' -f $_.Name, (@($_.Group | ForEach-Object { [string]$_.status }) -join '+')) })
 Add-Result -Name 'L2-ladder-orders-are-unique' -Passed ($duplicated.Count -eq 0) -Expected 'all-distinct' -Actual $(if ($duplicated.Count -eq 0) { 'all-distinct' } else { $duplicated -join '; ' })
+
+# SL -- source-reuse (Phase 2) ladder structural + drift-parity guards. The source track has its own front
+# half (SOURCE_INTAKE→REFERENCES_GATHERED→CAPABILITY_MAPPED→IMPLEMENTED) then MERGES into the shared
+# downstream. SL1: every source stage names meaning+next_action, no dangling next_status, main path reaches
+# RELEASED. SL2: source ladder orders unique. SL3 (drift guard, the important one): the shared-downstream
+# states' requires in lifecycle-states-source.json are byte-for-byte identical to lifecycle-states.json, so
+# the reused downstream can never silently drift into a second divergent copy (the ISSUE-096 failure mode).
+$sourcePath = Join-Path $script:Skill 'assets\lifecycle-states-source.json'
+if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+    Add-Result -Name 'SL0-source-table-present' -Passed $false -Expected 'present' -Actual 'missing'
+}
+else {
+    $sourceLc = Get-Content -Raw -Encoding UTF8 -LiteralPath $sourcePath | ConvertFrom-Json
+    $sourceStates = @($sourceLc.states)
+    $sourceByStatus = @{}
+    foreach ($s in $sourceStates) { $sourceByStatus[[string]$s.status] = $s }
+    $srcMissingAction = @($sourceStates | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.meaning) -or [string]::IsNullOrWhiteSpace([string]$_.next_action) } | ForEach-Object { [string]$_.status })
+    Add-Result -Name 'SL1-source-every-stage-names-next-step' -Passed ($srcMissingAction.Count -eq 0) -Expected 'all-named' -Actual $(if ($srcMissingAction.Count -eq 0) { 'all-named' } else { "blank: $($srcMissingAction -join ',')" })
+    $srcDangling = @($sourceStates | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.next_status) -and -not $sourceByStatus.ContainsKey([string]$_.next_status) } | ForEach-Object { [string]$_.status })
+    Add-Result -Name 'SL1-source-no-dangling-next-status' -Passed ($srcDangling.Count -eq 0) -Expected 'all-resolve' -Actual $(if ($srcDangling.Count -eq 0) { 'all-resolve' } else { "dangling: $($srcDangling -join ',')" })
+    $srcCursor = 'SOURCE_INTAKE'
+    $srcWalked = New-Object System.Collections.Generic.List[string]
+    $srcReachedReleased = $false
+    while ($sourceByStatus.ContainsKey($srcCursor) -and -not $srcWalked.Contains($srcCursor)) {
+        [void]$srcWalked.Add($srcCursor)
+        if ($srcCursor -eq 'RELEASED') { $srcReachedReleased = $true; break }
+        $srcCursor = [string]$sourceByStatus[$srcCursor].next_status
+        if ([string]::IsNullOrWhiteSpace($srcCursor)) { break }
+    }
+    Add-Result -Name 'SL1-source-main-path-reaches-released' -Passed $srcReachedReleased -Expected 'SOURCE_INTAKE..RELEASED' -Actual $(if ($srcReachedReleased) { 'SOURCE_INTAKE..RELEASED' } else { "stops at $srcCursor" })
+    $srcLaddered = @($sourceStates | Where-Object { $null -ne $_.order })
+    $srcDup = @($srcLaddered | Group-Object { [int]$_.order } | Where-Object { $_.Count -gt 1 } | ForEach-Object { [string]$_.Name })
+    Add-Result -Name 'SL2-source-ladder-orders-are-unique' -Passed ($srcDup.Count -eq 0) -Expected 'all-distinct' -Actual $(if ($srcDup.Count -eq 0) { 'all-distinct' } else { "dup: $($srcDup -join ',')" })
+    $sharedDownstream = @('CUSTOMIZATION_RECORDED', 'AUTH_HANDOFF_READY', 'AUTH_CONTRACT_READY', 'BUILD_READY', 'VERIFIED_SIMULATION', 'VERIFIED', 'RELEASED', 'MIGRATION_REQUIRED', 'ROLLBACK_READY')
+    $driftedStatuses = New-Object System.Collections.Generic.List[string]
+    foreach ($sharedStatus in $sharedDownstream) {
+        $exeState = @($states | Where-Object { [string]$_.status -eq $sharedStatus }) | Select-Object -First 1
+        $srcState = @($sourceStates | Where-Object { [string]$_.status -eq $sharedStatus }) | Select-Object -First 1
+        if ($null -eq $exeState -or $null -eq $srcState) { [void]$driftedStatuses.Add($sharedStatus + '(missing)'); continue }
+        $exeReq = ($exeState.requires | ConvertTo-Json -Depth 6 -Compress)
+        $srcReq = ($srcState.requires | ConvertTo-Json -Depth 6 -Compress)
+        if ($exeReq -ne $srcReq) { [void]$driftedStatuses.Add($sharedStatus) }
+    }
+    Add-Result -Name 'SL3-shared-downstream-requires-no-drift' -Passed ($driftedStatuses.Count -eq 0) -Expected 'in-sync' -Actual $(if ($driftedStatuses.Count -eq 0) { 'in-sync' } else { "drifted: $($driftedStatuses -join ',')" })
+}
+
+# SU -- source-reuse (Phase 2) track end-to-end on the SAME engine. init-source-product.ps1 creates a source
+# product (no EXE, no baseline). The one validator accepts it at SOURCE_INTAKE by reading the source ladder
+# (STATE track: source), and the EXE-baseline / reverse-engineering checks are correctly SKIPPED. Forging a
+# source product to VERIFIED must still be caught by the SHARED downstream gates (proving downstream reuse),
+# but NOT by EXE-only baseline/reverse-findings errors (proving the track guards). Break track selection and
+# SU1/SU2 go red; drop a downstream reuse and SU3-shared goes red; over-apply an EXE guard and SU3-no-* go red.
+function New-SourceFixture {
+    param([Parameter(Mandatory = $true)][string]$Name, [string]$ProductId = 'suite-source-product')
+    $root = Join-Path $FixtureRoot $Name
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $null = Invoke-Script -Name 'init-source-product.ps1' -ScriptArgs @('-ProductRoot', $root, '-ProductId', $ProductId, '-Goal', '做一个演示小工具')
+    return $root
+}
+$root = New-SourceFixture -Name 'su-source-intake'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'SU1-fresh-source-product-passes' -Text $run.Text -Pattern 'RESULT: passed'
+Assert-Match -Name 'SU2-source-ladder-in-use' -Text $run.Text -Pattern '(?m)^STATE: SOURCE_INTAKE'
+Assert-Match -Name 'SU2-source-next-is-references' -Text $run.Text -Pattern '(?m)^NEXT-STATUS: REFERENCES_GATHERED'
+Set-Status -Root $root -Status 'VERIFIED'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'SU3-forged-source-verified-fails' -Text $run.Text -Pattern 'RESULT: failed'
+Assert-Match -Name 'SU3-shared-downstream-gate-fires' -Text $run.Text -Pattern 'CUSTOMIZATION-MANIFEST\.yaml'
+Assert-Match -Name 'SU3-no-exe-baseline-error' -Text $run.Text -Pattern 'baseline_sha256 is missing' -Absent
+Assert-Match -Name 'SU3-no-reverse-findings-error' -Text $run.Text -Pattern 'findings 为空' -Absent
+
+# CM -- 学写法不硬合并门 (Phase 2). CAPABILITY_MAPPED needs every capability to carry self_implementation
+# (how you built it yourself in your own project) -- the "learn the idea, write it yourself" evidence.
+# reference_ids is OPTIONAL (user decision: 合规/来源登记 softened). Empty (CM1) and self_implementation-missing
+# (CM2) must be named; a capability with self_implementation but NO reference_ids clears it (CM3) -- proving
+# reference_ids is optional while self_implementation is required.
+$root = New-SourceFixture -Name 'cm-capability-mapping'
+Set-Status -Root $root -Status 'CAPABILITY_MAPPED'
+$capMap = Join-Path $root 'product-state\source\CAPABILITY-MAP.yaml'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+# Anchor on the capabilities-gate why (unique), not the file name: the file name also appears in the
+# NEXT-NEEDS line for IMPLEMENTED (which reads CAPABILITY-MAP status), so a file-name anchor never clears.
+Assert-Match -Name 'CM1-empty-capabilities-caught' -Text $run.Text -Pattern '能力映射不完整'
+[IO.File]::WriteAllText($capMap, "schema_version: 1`nproduct_id: `"suite-source-product`"`ncapabilities:`n  - id: c1`n    capability: `"demo`"`n    reference_ids: [`"r1`"]`n", (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'CM2-capability-missing-impl-caught' -Text $run.Text -Pattern '能力映射不完整'
+[IO.File]::WriteAllText($capMap, "schema_version: 1`nproduct_id: `"suite-source-product`"`ncapabilities:`n  - id: c1`n    capability: `"demo`"`n    self_implementation: `"importlib scan plugins dir`"`n", (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'CM3-self-impl-only-clears' -Text $run.Text -Pattern '能力映射不完整' -Absent
+
+# KN -- 已知不强校的门必须老实标注 (用户判据：会误伤合法情况的门不硬加，改为在技能里明写"已知不强校 + 原因").
+# Two openings I deliberately did NOT hard-gate (rules per-item anchor; selected_strategy vs PROTECTION
+# verdict) have legitimate counterexamples that a hard gate would false-flag. The honest disclosure in
+# SKILL.md is the deliverable; if someone deletes it, KN goes red -- so "not strictly gated" stays an
+# explicit, recorded trade-off rather than a silent omission.
+$knSkill = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $script:Skill 'SKILL.md')
+Assert-Match -Name 'KN1-known-not-gated-section-present' -Text $knSkill -Pattern '已知不强校的门'
+Assert-Match -Name 'KN2-rules-anchor-noted' -Text $knSkill -Pattern '定制规则未逐条强校 anchor'
+Assert-Match -Name 'KN3-strategy-verdict-noted' -Text $knSkill -Pattern '维护策略未强制与保护判定一致'
+
+# WU -- the WRITER (update-product-state.ps1) track-aware forward gate for the SOURCE track. The SU tests
+# forged status by hand-editing; this proves update-product-state itself governs source transitions against
+# the source ladder: it REFUSES SOURCE_INTAKE->REFERENCES_GATHERED while SOURCE-INTAKE is unsettled (WU1, and
+# writes nothing), and ALLOWS it once SOURCE-INTAKE is DEFINED -- references left EMPTY on purpose (optional
+# after the user's softening). Break the track->table selection and WU2 reds (EXE table would reject the
+# source status); re-add a url/commit/license reference hard gate and WU2 reds too (empty refs then refused).
+$root = New-SourceFixture -Name 'wu-writer-source-transition'
+$wuStatePath = Join-Path $root 'product-state\STATE.yaml'
+$wuBefore = (Get-FileHash -LiteralPath $wuStatePath -Algorithm SHA256).Hash
+$run = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'REFERENCES_GATHERED')
+$wuAfter = (Get-FileHash -LiteralPath $wuStatePath -Algorithm SHA256).Hash
+Assert-Match -Name 'WU1-source-transition-refused-when-unmet' -Text $run.Text -Pattern '还不能把状态改成'
+Add-Result -Name 'WU1-nothing-written' -Passed ($wuBefore -eq $wuAfter) -Expected 'unchanged' -Actual $(if ($wuBefore -eq $wuAfter) { 'unchanged' } else { 'modified' })
+$wuIntake = Join-Path $root 'product-state\source\SOURCE-INTAKE.yaml'
+[IO.File]::WriteAllText($wuIntake, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $wuIntake) -replace '(?m)^status:.*$', 'status: "DEFINED"'), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'REFERENCES_GATHERED', '-Mode', 'resume')
+Assert-Match -Name 'WU2-source-transition-allowed-empty-refs' -Text $run.Text -Pattern '"to_status":\s+"REFERENCES_GATHERED"'
+
+# SH -- start-here (the mandatory entry point) is track-aware with the SAME track->table selection the
+# validator (SU) and the writer (WU) already use. It used to judge every product against the EXE table:
+# a legitimate source product at SOURCE_INTAKE read as unknown, so the one script every agent runs first
+# printed STATE_REPAIR_REQUIRED and told the agent to "repair" the status back to an EXE value --
+# following that advice corrupts a legal source product. And a no-EXE folder was always answered with
+# "upload the EXE", closing the source-reuse door at the front desk. Break start-here's track->table
+# selection and SH1/SH2 go red (the EXE table does not know SOURCE_INTAKE, so the repair branch fires
+# and no source step is printed); drop the source-entry option from the no-EXE bootstrap and SH3 reds.
+$root = New-SourceFixture -Name 'sh-entry-source-track'
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'SH1-source-not-misrepaired' -Text $run.Text -Pattern 'STATE_REPAIR_REQUIRED' -Absent
+Assert-Match -Name 'SH1-no-exe-upload-ask' -Text $run.Text -Pattern '请直接上传 EXE' -Absent
+Assert-Match -Name 'SH2-source-status-recognised' -Text $run.Text -Pattern '(?m)^当前状态: SOURCE_INTAKE'
+Assert-Match -Name 'SH2-source-next-action-printed' -Text $run.Text -Pattern '联网找同类开源参考'
+Assert-Match -Name 'SH2-source-next-status-command' -Text $run.Text -Pattern '-Status REFERENCES_GATHERED'
+$root = Join-Path $FixtureRoot 'sh-empty-two-entries'
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'SH3-bootstrap-offers-source-entry' -Text $run.Text -Pattern 'init-source-product\.ps1'
+Assert-Match -Name 'SH3-bootstrap-keeps-exe-entry' -Text $run.Text -Pattern '请直接上传 EXE'
 
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''

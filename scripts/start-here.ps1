@@ -126,8 +126,13 @@ if (-not $hasState) {
     Write-Output ''
     Write-Output '必须按顺序执行:'
     if ($exeCandidates.Count -eq 0) {
-        Write-Output '  1. 这个文件夹里没有 EXE。用中文问用户要主程序，或者确认主程序在哪个文件夹。'
-        Write-Output '     只问这一句: 请直接上传 EXE，或告诉我它所在的产品文件夹；有说明文件就一起放进去。'
+        # Two entries share this skill (SKILL.md "两条入口"): black-box EXE maintenance and source-reuse
+        # (Phase 2, no EXE ever). Only offering "upload the EXE" here sent every source-reuse user down
+        # the wrong entry, so both doors are named and the agent routes by what the user actually wants.
+        Write-Output '  1. 这个文件夹里没有 EXE。两条入口都还开着，先判断用户要走哪条，不要张口就要 EXE:'
+        Write-Output '     - 黑盒 EXE 维护: 用中文问用户要主程序。只问这一句: 请直接上传 EXE，或告诉我它所在的产品文件夹；有说明文件就一起放进去。'
+        Write-Output '     - 源码复用二开(用户只带一句需求、没有也不会有 EXE): 直接建源码产品档案，建好后重新运行本脚本:'
+        Write-Output ('       powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $scriptDir 'init-source-product.ps1') + '" -ProductRoot ' + $quotedRoot + ' -ProductId <你选的编号> -Goal "<用户的一句需求>"')
     }
     else {
         $core = $exeCandidates[0].Full
@@ -147,13 +152,19 @@ if (-not $hasState) {
 
 $stateText = Read-TextFileSafe -Path (Join-Path $stateRoot 'STATE.yaml')
 $status = Get-YamlScalar -Text $stateText -Key 'status'
-$readiness = Get-LifecycleReadiness -StateRoot $stateRoot -Status $status
+# The same track->table selection the validator and the writer already use. Judged against the EXE
+# table, every legitimate source status (track: source, Phase 2) read as unknown, so this entry point
+# printed STATE_REPAIR_REQUIRED and told the agent to "repair" the status back to an EXE value --
+# advice that corrupts a legal source product, at the one place an agent looks first.
+$track = (Get-YamlScalar -Text $stateText -Key 'track').Trim()
+$lifecycleFile = Get-LifecycleTableFileForTrack -Track $track
+$readiness = Get-LifecycleReadiness -StateRoot $stateRoot -Status $status -TableFile $lifecycleFile
 if (-not [string]::IsNullOrWhiteSpace($status) -and -not $readiness.Known) {
     # STATE.yaml carries a status the lifecycle table does not know -- hand-edited, or a skipped step
     # left it polluted. Every step below is derived from a status the table understands, so print the
     # one repair action machine-readably and stop, instead of empty "继续..." steps that send the
     # agent off to re-improvise the order (the ISSUE-096 relapse the validator now also guards).
-    $legalStatuses = @((Get-LifecycleTable).states | ForEach-Object { [string]$_.status })
+    $legalStatuses = @((Get-LifecycleTable -TableFile $lifecycleFile).states | ForEach-Object { [string]$_.status })
     Write-Output ''
     Write-Output ("STATE_REPAIR_REQUIRED: STATE.yaml 的 status=" + $status + " 不在生命周期表里，先修状态再谈下一步")
     Write-Output "NEXT-STATUS: STATE_REPAIR"
@@ -228,5 +239,8 @@ Write-Output ''
 Write-Output '不要做:'
 Write-Output '  - 不要重新初始化已有产品（会拒绝，但也别试）。'
 Write-Output '  - 不要手改 STATE.yaml 或 PRODUCT-INDEX.md，用 update-product-state.ps1。'
-Write-Output '  - 不要把新交来的 EXE 当成当前版本，登记成新批次后再比较。'
-Write-Output '  - 不要因为 TOOL-INVENTORY.md 存在就认为工具清单是新的，一律带 -ReuseInventory 重跑。'
+if ($track -ne 'source') {
+    # 下面两条是 EXE 二开轨道专属；源码复用轨道没有“新交来的 EXE”，前半段也没有逆向工具清单，故对源产品不打印。
+    Write-Output '  - 不要把新交来的 EXE 当成当前版本，登记成新批次后再比较。'
+    Write-Output '  - 不要因为 TOOL-INVENTORY.md 存在就认为工具清单是新的，一律带 -ReuseInventory 重跑。'
+}

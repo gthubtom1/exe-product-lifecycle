@@ -1,0 +1,13 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+# 同类开源参考登记（可选/建议）。学的是"写法/思路"，不是整包合并别人代码库。合规/版权不在本流程考虑范围。
+# 想记就记、方便自己回溯：url、commit（版本）、用途、学到了什么，全是可选字段，不做缺失必红的硬门。
+# 供应链安全提示（保护你的机器、与版权无关）：不要盲目运行/安装不可信的外部代码；默认不自动克隆/装依赖。
+references: []
+# 每条示例（想登记时填，字段都可选、删本注释按需增减）：
+#   - id: r1
+#     url: "https://github.com/owner/repo"    # 可选
+#     commit: "a1b2c3d4"                      # 可选，钉版本方便回溯
+#     purpose: "参考它的插件加载写法"          # 可选
+#     learned: "用清单+动态导入，而非硬编码分支" # 可选
+source_of_truth: "product-state/source/REFERENCE-INVENTORY.yaml"

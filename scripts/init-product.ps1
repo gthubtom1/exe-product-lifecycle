@@ -80,7 +80,7 @@ $stateDirs = @(
     'analysis', 'auth', 'release', 'migrations', 'reports', 'rollback', 'tooling', 'learning', 'learning\candidates',
     'artifacts', 'artifacts\upstream', 'artifacts\maintained', 'artifacts\patches',
     'artifacts\verification', 'artifacts\rollback', 'artifacts\incoming',
-    'artifacts\quarantine', 'artifacts\reference-docs'
+    'artifacts\quarantine', 'artifacts\reference-docs', 'artifacts\analysis'
 )
 foreach ($relative in @($externalDirs) + @($stateDirs | ForEach-Object { Join-Path 'product-state' $_ })) {
     $path = Join-Path $root $relative

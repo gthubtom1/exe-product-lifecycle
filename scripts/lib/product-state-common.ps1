@@ -325,16 +325,105 @@ function Get-YamlListCount {
     return -1
 }
 
+function Get-LifecycleTableFileForTrack {
+    param([AllowEmptyString()][string]$Track)
+
+    # One place decides which lifecycle table a track uses, so the validator, the writer and the
+    # readiness engine can never disagree. Source-reuse (Phase 2) products carry track: source and run
+    # the source ladder; everything else (including a legacy product with no track field) uses the EXE
+    # ladder. A single JSON name is returned, never a path, so callers stay SkillRoot-relative.
+    if (([string]$Track).Trim().ToLowerInvariant() -eq 'source') { return 'lifecycle-states-source.json' }
+    return 'lifecycle-states.json'
+}
+
 function Get-LifecycleTable {
-    param([string]$SkillRoot)
+    param([string]$SkillRoot, [string]$TableFile = 'lifecycle-states.json')
 
     if ([string]::IsNullOrWhiteSpace($SkillRoot)) { $SkillRoot = $ProductStateSkillRoot }
-    $path = Join-Path $SkillRoot 'assets\lifecycle-states.json'
+    if ([string]::IsNullOrWhiteSpace($TableFile)) { $TableFile = 'lifecycle-states.json' }
+    $path = Join-Path $SkillRoot (Join-Path 'assets' $TableFile)
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw (New-UserFacingError -Message "生命周期状态表缺失: $path" `
             -Hint '这个 Skill 的安装不完整，重新同步一次 Skill 文件。')
     }
     return (Read-TextFileSafe -Path $path | ConvertFrom-Json)
+}
+
+function Test-ProtectionSaysPacked {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
+
+    # Read a written PROTECTION-PROFILE.yaml and answer the one question the unpacking decision hangs on:
+    # does the static evidence say this target is packed/encrypted. Mirrors Get-ModifiabilityVerdict's
+    # isPacked signal -- a WRAPPER_ONLY verdict, a named packer, or high total entropy -- so the detector
+    # and this gate cannot disagree about what "packed" means. Ambiguous reads as not-packed: the
+    # six-category settlement gate already forces unpacking to be a real decision either way, and this rule
+    # only exists to stop the specific "packed target, unpacking dodged as not_applicable" lie.
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    if ((Get-IndentedYamlScalar -Text $Text -Key 'verdict') -match '(?i)WRAPPER_ONLY') { return $true }
+    $packer = (Get-IndentedYamlScalar -Text $Text -Key 'packer').Trim().ToLowerInvariant()
+    if (-not [string]::IsNullOrWhiteSpace($packer) -and $packer -notin @('none-detected', 'none', 'unknown', 'unverified')) { return $true }
+    $entropy = 0.0
+    if ([double]::TryParse((Get-IndentedYamlScalar -Text $Text -Key 'entropy_total'), [ref]$entropy) -and $entropy -gt 7.2) { return $true }
+    return $false
+}
+
+function Get-YamlListRecords {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$ListKey
+    )
+
+    # Generic "list of maps" reader for a top-level block list (references:, capabilities:, ...). Returns one
+    # hashtable of scalar fields per item, capturing both the "- field: value" opener and the item's
+    # subsequent indented "field: value" lines; a nested list inside an item is ignored. The source
+    # registration/learn gates use this to check each reference/capability field by field, not just count it.
+    $stripValue = {
+        param($v)
+        $x = ([string]$v)
+        if ($x.StartsWith('#')) { return '' }
+        $x = ($x -replace '\s+#.*$', '').Trim()
+        if ($x.Length -ge 2) {
+            $first = $x.Substring(0, 1); $last = $x.Substring($x.Length - 1, 1)
+            if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) { $x = $x.Substring(1, $x.Length - 2) }
+        }
+        return $x.Trim()
+    }
+    $records = New-Object System.Collections.Generic.List[hashtable]
+    $inList = $false
+    $listIndent = -1
+    $current = $null
+    foreach ($line in ($Text -split "`r?`n")) {
+        $topKey = [regex]::Match($line, '^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$')
+        if ($topKey.Success) {
+            if ($null -ne $current) { [void]$records.Add($current); $current = $null }
+            if ($topKey.Groups[1].Value -eq $ListKey) {
+                $inList = ($topKey.Groups[2].Value.Trim() -ne '[]')
+                $listIndent = -1
+            }
+            else { $inList = $false }
+            continue
+        }
+        if (-not $inList) { continue }
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line -match '^\s*#') { continue }
+        $item = [regex]::Match($line, '^(\s*)-\s+(.*)$')
+        if ($item.Success) {
+            $indent = $item.Groups[1].Value.Length
+            if ($listIndent -lt 0) { $listIndent = $indent }
+            if ($indent -ne $listIndent) { continue }
+            if ($null -ne $current) { [void]$records.Add($current) }
+            $current = @{}
+            $opener = [regex]::Match($item.Groups[2].Value, '^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$')
+            if ($opener.Success) { $current[$opener.Groups[1].Value] = (& $stripValue $opener.Groups[2].Value) }
+            continue
+        }
+        if ($null -ne $current) {
+            $field = [regex]::Match($line, '^\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$')
+            if ($field.Success) { $current[$field.Groups[1].Value] = (& $stripValue $field.Groups[2].Value) }
+        }
+    }
+    if ($null -ne $current) { [void]$records.Add($current) }
+    return $records
 }
 
 function Test-LifecycleRequirement {
@@ -382,6 +471,46 @@ function Test-LifecycleRequirement {
             if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
             return (Test-BindingStrengthEvidence -Text (Read-TextFileSafe -Path $full) -UnsettledValues $UnsettledValues)
         }
+        'list_records_have_fields' {
+            # (Phase 2 source gates) A block list under $Requirement.key must be non-empty AND every item
+            # must carry each field in $Requirement.fields, settled. references_registered: url/commit/license
+            # (缺任一或空登记判失败 -> 来源可追溯). capabilities_mapped: self_implementation/reference_ids
+            # (学写法而非整包搬运 -> 每个能力都要写清自己怎么实现、参考了谁). Fails closed on a missing file.
+            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
+            $records = @(Get-YamlListRecords -Text (Read-TextFileSafe -Path $full) -ListKey ([string]$Requirement.key))
+            if ($records.Count -eq 0) { return $false }
+            $isSettled = {
+                param($value)
+                $trimmed = ([string]$value).Trim()
+                if ([string]::IsNullOrWhiteSpace($trimmed)) { return $false }
+                return ($UnsettledValues -notcontains $trimmed)
+            }
+            foreach ($record in $records) {
+                foreach ($field in @($Requirement.fields)) {
+                    $fieldName = [string]$field
+                    if (-not $record.ContainsKey($fieldName)) { return $false }
+                    if (-not (& $isSettled $record[$fieldName])) { return $false }
+                }
+            }
+            return $true
+        }
+        'unpacking_consistent_with_protection' {
+            # (opening c) Unpacking must be an ACTION decision, not just a detector probe. When the
+            # protection profile says the target is packed/high-entropy, ANALYSIS-FINDINGS.unpacking cannot
+            # be not_applicable (nor left unsettled): it has to be done (unpacked/dumped, evidence saved) or
+            # blocked (tried, couldn't). A not-packed target may legitimately mark it not_applicable, so the
+            # gate is silent there -- that is the mutation guard against a rule stuck always-firing.
+            $findingsFull = Join-Path $StateRoot 'analysis\ANALYSIS-FINDINGS.yaml'
+            if (-not (Test-Path -LiteralPath $findingsFull -PathType Leaf)) { return $false }
+            $protectionFull = Join-Path $StateRoot 'PROTECTION-PROFILE.yaml'
+            $packed = $false
+            if (Test-Path -LiteralPath $protectionFull -PathType Leaf) {
+                $packed = Test-ProtectionSaysPacked -Text (Read-TextFileSafe -Path $protectionFull)
+            }
+            if (-not $packed) { return $true }
+            $unpacking = (Get-YamlScalar -Text (Read-TextFileSafe -Path $findingsFull) -Key 'unpacking').Trim().ToLowerInvariant()
+            return ($unpacking -in @('done', 'blocked'))
+        }
         default {
             # An unknown check kind must fail closed. Returning "satisfied" for a rule nobody
             # implemented is how a gate quietly stops being a gate.
@@ -394,10 +523,11 @@ function Get-LifecycleReadiness {
     param(
         [Parameter(Mandatory = $true)][string]$StateRoot,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Status,
-        [string]$SkillRoot
+        [string]$SkillRoot,
+        [string]$TableFile = 'lifecycle-states.json'
     )
 
-    $table = Get-LifecycleTable -SkillRoot $SkillRoot
+    $table = Get-LifecycleTable -SkillRoot $SkillRoot -TableFile $TableFile
     $unsettled = @($table.unsettled_values | ForEach-Object { [string]$_ })
     $states = @($table.states)
     $current = @($states | Where-Object { [string]$_.status -eq $Status }) | Select-Object -First 1

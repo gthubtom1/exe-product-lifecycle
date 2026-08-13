@@ -1,0 +1,14 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+# 能力映射：把需求拆成一个个能力，每个能力必须写清「自己在本项目怎么实现」(self_implementation)——
+# 这是"学思路、自己写"的体现（不是把参考项目整包塞进产物）。reference_ids(学了谁的写法)与 evidence
+# (构建/运行证据指针)是可选的、想记就记。status 未定时不能算实现完成。
+status: "PENDING"                 # PENDING -> MAPPED（每个能力都给出 self_implementation 后置 MAPPED）
+capabilities: []
+# 每条示例（真正实现时填）：
+#   - id: c1
+#     capability: "插件热加载"
+#     self_implementation: "在本项目 plugins/ 用 importlib 扫描+动态导入"   # 必填
+#     reference_ids: ["r1"]              # 可选：学了哪些参考的写法
+#     evidence: "product-state/artifacts/verification/plugin-load.txt"   # 可选：构建/运行证据指针
+source_of_truth: "product-state/source/CAPABILITY-MAP.yaml"

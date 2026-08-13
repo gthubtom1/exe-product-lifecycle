@@ -5,6 +5,16 @@ This file is the vendor-neutral entry point for agents that do not load Codex
 release, or update a Windows EXE product. It is not a global router and it does
 not replace the host agent's own instructions.
 
+## 两条入口（前半段不同，后半段共用）
+
+- **黑盒 EXE 入口（默认，本文件其余部分描述的就是它）**：用户交来没有源码的 EXE，逆向理解 → 复刻/定制 → 授权 → 测试 → 发布。用 `scripts/init-product.ps1`，走 `assets/lifecycle-states.json`。
+- **源码复用·二开入口（Phase 2）**：用户只说一个需求，联网找同类开源项目当参考、**学写法而非整包合并**、在用户自己项目里实现，再走**同样的后半段**（定制 / 授权 / 发布 / 回滚）。用 `scripts/init-source-product.ps1`（无需 EXE），`STATE.yaml` 带 `track: source`，走 `assets/lifecycle-states-source.json`：`SOURCE_INTAKE → REFERENCES_GATHERED → CAPABILITY_MAPPED → IMPLEMENTED → 汇入共享下游`。同一个 `validate-product-state.ps1` 按 `track` 选表；EXE 专属检查（基线哈希、core 完整性、逆向 findings 绑定等）对源轨道自动跳过——源码入口本就有源码、不需逆向。源专属门：
+  - 学写法不硬合并（核心门）：`source/CAPABILITY-MAP.yaml` 每个能力必须写清 `self_implementation`（自己在本项目怎么实现）——这是"学思路自己写、不是整包搬运"的证据；`reference_ids`（学了谁的写法）可选、想记就记；
+  - 来源登记（可选/建议）：`source/REFERENCE-INVENTORY.yaml` 只需文件在即可，里面登记同类开源参考纯为方便自己回溯，`url`/`commit` 等均为可选、空登记也不拦（本流程学写法、不整包合并，合规/版权不在考虑范围）；
+  - 构建/真跑证据：直接沿用共享下游的 `EVIDENCE-LEDGER`（运行期证据绑定真实文件）与 `reports/RUN-EVIDENCE.yaml`（真启动一遍并留截图/录屏）；
+  - 许可证：**不设阻塞式许可证门、也不做许可/版权类默认提醒**（scaffold 里仅保留一句信息性供应链注记：保护你的机器、与版权无关，见下一条）——本流程学别人思路自己写、不整包合并别人代码，上游许可义务基本不触发，合规/版权不在本流程考虑范围；
+  - 供应链：默认**不自动克隆/安装外部依赖、不联网执行外部代码**；只有真去跑或依赖外部代码时才提醒，并先登记来源/版本/许可（在有宿主授权规则时走授权）。
+
 Load `references/knowledge-lifecycle.md` only when the task asks to reuse cross-product experience or the current product has matching reusable-learning tags. Product evidence stays in that product's `product-state/`; shared candidates are sanitized and reviewed separately. Only `knowledge/verified/` may be queried as an analysis hint, and every match must be reverified on the current EXE.
 
 ## 先运行这一条
@@ -149,6 +159,8 @@ having ignored the request. If the mode is unclear and there is no unregistered 
 
 ## Required sequence
 
+> 说明：下面 §0–§6 是**黑盒 EXE 二开轨道**（`track` 非 source）的分步。**源码复用·二开轨道**（`track: source`）的分步不在这里逐条重复——以顶部"两条入口"一节、`scripts/start-here.ps1` 的逐条输出、以及 `assets/lifecycle-states-source.json` 为准；两轨从 §3 定制起汇入同一套共享下游。无论哪条，都先跑 `start-here.ps1` 按它打印的顺序做，不要凭本文正文推断顺序。
+
 ### 0. Mode-first loading
 
 Do not pre-read every reference or run every validator. Use the smallest useful set:
@@ -198,6 +210,18 @@ This is static -- the target is never executed. The verdict is not a preference:
 it is what the maintenance strategy must obey, because "去除/绕过原授权入口"
 silently bricks the core when the target is packed, self-checking or signed.
 `ANALYZED` requires this profile to be assessed.
+
+Record the reverse-engineering findings in `analysis/ANALYSIS-FINDINGS.yaml`.
+逆向不等于反编译：反编译只是其中一招。这份记录覆盖六类逆向手段，每类都必须给出一个决定
+（`done` / `not_applicable` / `blocked`），不能留 `PENDING`：静态结构/导入
+(dumpbin、DIE、llvm-readobj)、字符串与交叉引用、资源 (ResourceHacker)、关键路径反汇编/反编译
+(IDA、Ghidra、radare2；.NET 用 dnSpy/ILSpy)、受控运行的动态行为观察 (Procmon、x64dbg、frida)、
+以及脱壳 (加壳/高熵时记录脱壳或内存转储结果，未加壳填 `not_applicable`)。选工具见
+`references/toolchain.md`。`ANALYZED` requires the record to exist with a settled `status`; a real
+`VERIFIED`/`RELEASED` additionally requires at least one `findings` entry bound to a real tool-output
+file under `product-state/` whose `sha256` matches -- the same anti-fabrication rule the evidence
+ledger uses, so typing "反汇编过了" without saving the tool output does not count as reverse
+engineering.
 
 ### 3. Record customizations as rules
 
@@ -261,10 +285,19 @@ strategy.
 A release remains `DRAFT` until startup, authorization, core flows, custom UI,
 custom contact information, update behavior, data preservation, and rollback
 are evidenced. Verify hashes and signatures before installation or publication.
+A real `VERIFIED`/`RELEASED` additionally requires real-run evidence bound in
+`reports/RUN-EVIDENCE.yaml`: a screenshot or recording of an actual launch
+(launcher → authorization → core → real operation) plus offline-rejected and
+bad-key-rejected evidence, each `path` + `sha256` pointing at a real file under
+`product-state/`. A typed "it ran" is not evidence -- a screenshot is far harder
+to fabricate, which is what makes this the counter to a self-consistent forgery.
 Also create the component-level release manifest and
 `release/RELEASE-PUBLISH-REQUEST.md`; the platform owns registration, visibility,
 channel push, withdrawal, and publication audit, while this workflow owns the
-local package and evidence.
+local package and evidence. `RELEASED` additionally requires the platform's
+returned registration recorded in `release/RELEASE-REGISTRATION.yaml`
+(`registration_id`): a self-written publish request alone is a request, not proof
+the platform registered and released the version.
 
 Every modification or release has four linked deliverables: the modified
 artifact, a Patch/Diff or reproducible overlay/patch record, a verification
@@ -382,7 +415,7 @@ evidence with material `UNVERIFIED` contract fields resolved.
   there yet, and finish an interrupted transition with `-ResumeJournal`.
 - `assets/lifecycle-states.json`: what each status means, the evidence it requires, and the next
   action. Read by the forward gate and by the agent; do not keep a second copy of this order.
-- `scripts/validate-product-state.ps1`: validate structure, identity/status consistency, the forward status gate, unregistered inputs, preserved/release hashes, migration counts, simulation labels, and verified contracts. It also prints `NEXT-STATUS`, `NEXT-ACTION` and `NEXT-NEEDS`.
+- `scripts/validate-product-state.ps1`: validate structure, identity/status consistency, the forward status gate, unregistered inputs, preserved/release hashes, migration counts, simulation labels, and verified contracts. It also prints `NEXT-STATUS`, `NEXT-ACTION` and `NEXT-NEEDS`. For a real `VERIFIED`/`RELEASED` it prints `EVIDENCE-TRUST` (`self-asserted` by default, because a static gate cannot prove a hash-consistent artifact was really produced by exercising the product; `-RequireAttestation` demands a named human endorse the status in `product-state/attestation/ATTESTATION.yaml`, and a complete endorsement changes the line to `named-attestation by <approver> (identity NOT verified)` -- the tool checks the record is complete and matches the status, but verifies no identity and no signature, so the label carries that ceiling instead of claiming external attestation).
 - `scripts/test-product-state-gates.ps1`: negative-path regression for the state machine.
 - `scripts/test-tool-inventory-reuse.ps1`: behaviour regression for tool-inventory reuse and the atomic inventory write.
 - `scripts/capture-experience.ps1`, `add-experience-evidence.ps1`, `review-experience.ps1`, `promote-pattern.ps1`, and `deprecate-pattern.ps1`: operate the reusable knowledge lifecycle.
