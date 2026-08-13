@@ -15,6 +15,17 @@
 
 **不确定走哪条、或手上没有 EXE，先运行 `scripts/start-here.ps1`**：它是只读的，会按当前产品档案判断该走哪条入口并逐条打印下一步命令。两条入口的完整说明见 `SKILL.md` / `WORKFLOW.md` 的"两条入口"。
 
+## 给智能体的关键须知（拉下来先看这几条，避免误解）
+
+1. **只在 Windows 上真正运行**（PowerShell 5.1 或 7 都行）。脚本用注册表 / `System32` / Windows 专用分析工具；macOS/Linux 上智能体只能读懂流程、不能执行脚本，`start-here.ps1` 会在非 Windows 上直接明说。
+2. **每一步先跑 `scripts/start-here.ps1`**（只读、可反复跑），照它打印的命令顺序做。顺序写在代码里、不在文档正文里——凭正文推断顺序正是它要防的错（先分析后建档、把"继续维护"当成只汇报）。
+3. **绝不手改 `STATE.yaml` / `PRODUCT-INDEX.md`**，只用 `scripts/update-product-state.ps1`：它按 `assets/lifecycle-states.json` 校验证据、拒绝跳级，并把两份状态文件当一个事务写。手改会让状态互相打架。
+4. **两条入口**：手上没有 EXE 不是死路——用户只有"一句需求"时走源码复用二开（`scripts/init-source-product.ps1`），别张口就要 EXE。也别让一个 EXE 产品谎报 `track: source` 来跳过基线/逆向门（校验器会拦）。
+5. **新交来的 EXE 不是发布件**：先用 `scripts/register-input-bundle.ps1` 登记成不可变批次再比较，绝不覆盖已保存的基线。
+6. **头脑风暴是可选、默认关**：只在分析卡住时开；一旦把 `analysis/BRAINSTORM-LOG.yaml` 标成 `resolved`，就必须已在 `analysis/ROUTE-DECISION.yaml` 里选定一条真实路线，否则判红。别当成必经步骤。
+7. **`VERIFIED` / `RELEASED` 要真证据**（真跑截图/录屏、哈希对得上的工具输出、可运行的回滚）。`EVIDENCE-TRUST: self-asserted` 表示静态门只能校验哈希、无法证明真伪——绿灯不等于"已被独立证明"。
+8. **用 `git clone` 安装、别用复制**：机器学到的经验写在安装副本旁，只有 clone（保留 `.git`）+ `scripts/publish-knowledge.ps1` 能把它保住并发布；复制进去的副本一旦丢失，经验哪里都没有。
+
 ## 它解决什么问题
 
 - **上游一发新版，定制就白做。** 定制被记录成带锚点的规则，而不是只存在于某个改好的 EXE 里；迁移时逐条重放，锚点找不到就报冲突，而不是悄悄退回原版外观。
@@ -22,6 +33,7 @@
 - **状态可以凭空声称。** 产品状态只能通过 `scripts/update-product-state.ps1` 改，它按 `assets/lifecycle-states.json` 校验证据、拒绝跳级，并把两份状态文件当一个事务写。
 - **改之前不知道能不能改。** `scripts/detect-protections.ps1` 先静态判定加壳、熵值、反调试、自校验和签名，由判定结果决定维护策略——它从不运行目标程序。
 - **经验只留在某个人的对话里。** 跨产品经验要经过脱敏、第二个真实产品复验、正负 Fixture 和绑定正文 Hash 的审核，才能进入共享知识库；自动检索只允许已审核的那一层。
+- **分析卡住、无从下手。** 逆向到"六类手段迟迟给不出决定"时，可开一场**可选、默认关**的有界头脑风暴（`references/analysis-brainstorm.md`）：主对话当桥、派几个对立角色互相找漏洞、快速收敛；收尾**必须**落到一条已决路线（`analysis/ROUTE-DECISION.yaml`）否则判红——把"开了会但没决定"挡在门外。
 
 ## 安装
 
@@ -76,7 +88,7 @@ git -C "$env:USERPROFILE\.codex\skills\exe-product-lifecycle" pull
 
 ## Windows 前提
 
-- **只能在 Windows 上真正运行。** 二十多个脚本都是 PowerShell，用到注册表、`System32` 和 Windows 专用分析工具。在 macOS / Linux 上智能体能读懂流程，但脚本会失败。
+- **只能在 Windows 上真正运行。** 40 多个 PowerShell 脚本（`scripts/` 下 42 个 + `scripts/lib/` 5 个共享库）加 16 套自检测试，用到注册表、`System32` 和 Windows 专用分析工具。在 macOS / Linux 上智能体能读懂流程，但脚本会失败。
 - **Windows PowerShell 5.1（系统自带）或 PowerShell 7 都可以**，两条通道都在 CI 上跑。
 - **Python 3 只有维护者需要**：仅 `scripts/validate-schema-links.py` 这一个校验脚本用到，日常使用这个 Skill 不需要 Python。
 - **不需要管理员权限**，除非要启动本地临时授权 mock 服务器（`scripts/mock-authorization-server.ps1`）——Windows 的 http.sys 注册本地 URL 通常要管理员或 `netsh` 预留；被拒时脚本会明确区分"权限不足"和"端口被占用"，不会让你白换端口。
@@ -139,29 +151,45 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publish-knowledge.ps
 
 | 路径 | 作用 |
 | --- | --- |
-| `SKILL.md` | Skill 入口与路由边界，智能体从这里开始 |
-| `WORKFLOW.md` | 完整目录树、脚本参数、分模式流程 |
-| `scripts/` | PowerShell 脚本：产品状态机、输入登记、保护探测、工具发现、知识生命周期、自检测试 |
-| `assets/` | EXE 轨道状态定义 `lifecycle-states.json` + 产品脚手架 `product-scaffold/`；源码复用轨道状态定义 `lifecycle-states-source.json` + 源脚手架 `source-scaffold/` |
-| `references/` | 按需加载的工具链、授权交接、知识生命周期说明 |
-| `knowledge/` | 公开、脱敏的可复用经验库（仅 JSON，带公开边界门禁） |
-| `agents/openai.yaml` | Codex 触发配置 |
+| `SKILL.md` | Skill 入口与路由边界、两条入口、强制 STEP 0、任务自检；智能体从这里开始（Windows 专用，PowerShell 5.1/7） |
+| `WORKFLOW.md` | 厂商中立的完整流程：目录树、脚本参数、六种模式、§0–§6 分步 |
+| `scripts/` | 42 个 PowerShell 脚本 + `lib/` 5 个共享库 + 1 个 `validate-schema-links.py`：产品状态机、输入登记、保护探测、工具发现、能力库、授权 mock、知识生命周期、同步/一致性、以及 16 套 `test-*.ps1` 自检 |
+| `assets/` | EXE 轨道状态表 `lifecycle-states.json`（12 态）+ 产品脚手架 `product-scaffold/`；源码复用轨道状态表 `lifecycle-states-source.json`（13 态）+ 源脚手架 `source-scaffold/` |
+| `references/` | 按需加载：`toolchain`、`auth-handoff`、`release-update`、`knowledge-lifecycle`、`beginner-guide`、`analysis-brainstorm`（可选头脑风暴） |
+| `catalog/` | 内置工具角色表 `tools.builtin.json`（26 角色）+ 能力→工具桥 `capabilities.builtin.json`（24 条）；升级覆盖，机器学到的另存 `knowledge/tools/` 且不提交 |
+| `capabilities/` | 独立能力配方库 `recipes/` + `INDEX.json`（默认拒收校验，CI 维护） |
+| `schemas/` | 5 个 JSON Schema（经验、经验草稿、知识索引、模式、能力配方） |
+| `knowledge/` | 公开、脱敏的可复用经验库（仅 JSON，带 21 条隐私边界门禁；`candidates`/`verified`/`deprecated`/`tools`） |
+| `fixtures/` | 测试夹具（知识演化的正/负证据样本等） |
+| `.github/workflows/` | 双宿主 CI：PowerShell 5.1 与 7 各跑一遍全部校验器与测试 |
+| `agents/openai.yaml` | Codex 触发配置（Codex 专用镜像） |
+| `LICENSE` | MIT |
 
 ## 维护者验证
 
-以下命令是维护这个 Skill 的人用的，不是普通用户的使用步骤：
+以下是维护这个 Skill 的人用的，不是普通用户的使用步骤。**权威完整清单以 `.github/workflows/validate-skill.yml` 为准**——它在 PowerShell 5.1 与 7 两个宿主上各跑一遍全部门禁。
+
+三个校验器：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-skill-layout.ps1
-python scripts/validate-schema-links.py
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-evolution.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-product-scaffold.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-product-state-gates.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-detect-protections.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-mock-authorization.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-mock-authorization-http.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-tool-inventory-reuse.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-install-parity.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-skill-layout.ps1   # 布局/解析/可达性/JSON/知识边界
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-capabilities.ps1     # 能力配方默认拒收 + 索引一致
+python scripts/validate-schema-links.py                                                    # Schema 本地 $ref 可解析（唯一需要 Python 的脚本）
+```
+
+16 套 `test-*.ps1`（每套都用"改坏必红"的变异/负路径测试钉死一道保护，逐条运行方式同上 `-File scripts/<名>`）：
+
+```text
+test-product-state-gates   状态机与全部证据门的负路径（含头脑风暴门 BB/SHB）
+test-skill-layout-reachability  可达性门的变异测试（RG1–RG8）
+test-detect-protections    每个可改性判定分支 + 画像落盘
+test-evolution / test-knowledge-hash   知识生命周期端到端 + 跨宿主哈希
+test-product-scaffold      新建产品能过校验且带 learning 脚手架
+test-capability-evolution / test-gap-classify / test-resolve-capability / test-suggest-tool-acquisition / test-capability-wiring   能力库准入门与接线
+test-mock-authorization / test-mock-authorization-http   授权 mock 契约（核心 + 真 HTTP）
+test-tool-inventory-reuse  工具发现复用与原子写
+test-install-parity        源目录 vs 本机实际加载副本的漂移
+test-ci-host-parity        两个 CI 宿主跑的测试集必须一致且等于磁盘全集
 ```
 
 `test-install-parity.ps1` 的最后一段会比对**这台机器上智能体实际加载的那份副本**。它报 `DRIFT:` 就说明源目录已经改好但装的还是旧版。

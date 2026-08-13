@@ -219,6 +219,13 @@ else {
         Write-Output ('     powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $scriptDir 'detect-protections.ps1') + '" -ProductRoot ' + $quotedRoot)
     }
     if (@($readiness.PendingForNext | Where-Object { $_.Detail -like '*ANALYSIS-FINDINGS*' }).Count -gt 0) {
+        # Optional escape from analysis paralysis, printed beside the pressure point that causes it (the
+        # six categories still undecided) rather than in prose, for the same reason this whole script
+        # exists. It is off by default and NOT a required step -- only a way out when an agent is stuck on
+        # how to even begin. The gate that makes it honest lives in validate-product-state.ps1: once you
+        # mark BRAINSTORM-LOG resolved you must have landed a real ROUTE-DECISION, or it reds.
+        Write-Output '     [可选] 不确定怎么切入（六类迟迟给不出决定 / 找不到授权面 / 不知道走哪条复刻路线）: 可以开一场有界头脑风暴——主对话当桥，派 2-4 个对立角色（静态结构派 / 动态调试派 / 已知工具复用派 / 怀疑者）各出一个切入方案并互相找漏洞，1-2 轮快速收敛。做法见 references/analysis-brainstorm.md。'
+        Write-Output '     它默认关、也不是必经步骤；一旦你开了并把 analysis/BRAINSTORM-LOG.yaml 的 status 改成 resolved，就必须已经在 analysis/ROUTE-DECISION.yaml 里选定一条真实路线（否则校验会红——讨论结束不等于完成）。'
         # The six reverse-engineering categories each have to end in done/not_applicable/blocked before
         # ANALYZED can be written, and that gate pushes. When a category genuinely ran its tool and got
         # nothing back, the cheapest way out is not_applicable -- which is exactly the "quietly fill the

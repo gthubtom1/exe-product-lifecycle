@@ -23,16 +23,16 @@
 #   powershell -File suggest-tool-acquisition.ps1 -CapabilityId decompile.dotnet -ProductRoot <p>
 #   powershell -File suggest-tool-acquisition.ps1 -CapabilityId unpack.pe.upx -ProductRoot <p> -FailedTool "upx.exe,7z.exe"
 #
-# NOT WIRED YET. gap-classify.ps1 is where this belongs -- its capability_gap branch already ends in the
-# placeholder "待带外放行安装（后续 acquire 阶段）" -- but that file has another owner right now, so the
-# hook-up is left to them. The low-risk shape is one extra footer line rather than an inlined call: this
-# script prints its own `RESULT:` and `capability_id=` lines, so splicing its output into gap-classify's
-# footer would give that contract a second set of them for any parser that reads the last match. Emitting
+# HOW IT IS WIRED. gap-classify.ps1's capability_gap branch (its final block) prints a pointer footer line
 #
 #     suggest_command=powershell -File <dir>\suggest-tool-acquisition.ps1 -CapabilityId <id> -ProductRoot <root> -FailedTool "<tools_tried joined by commas>"
 #
-# next to blocking_item= keeps both output contracts intact, and keeps a failure in here from ever landing
-# after gap-classify has already written its three archive files.
+# next to its blocking_item= line, rather than inlining a call. That shape is deliberate: this script prints
+# its own `RESULT:` and `capability_id=` lines, so splicing its output into gap-classify's footer would give
+# that contract a second set of them for any parser that reads the last match. Emitting a pointer instead
+# keeps both output contracts intact, and keeps a failure in here from ever landing after gap-classify has
+# already written its three archive files. (start-here.ps1 surfaces gap-classify at the pending-evidence
+# pressure point, and test-capability-wiring.ps1 pins that the executor really prints it there.)
 
 [CmdletBinding()]
 param(

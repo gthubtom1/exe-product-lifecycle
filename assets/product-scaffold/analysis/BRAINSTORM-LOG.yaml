@@ -1,0 +1,37 @@
+schema_version: 1
+product_id: "__PRODUCT_ID__"
+# 分析头脑风暴日志（可选 · 默认关）。只有当逆向分析卡在"不知道怎么切入"时才开：六类逆向迟迟
+# 给不出决定、找不到授权面、不确定走哪条复刻路线时，用它把"多角色对辩"落成结构化记录，而不是
+# 在对话里议论一通就散。完整协议见 references/analysis-brainstorm.md。
+#
+# 它不是又一份要写的档案。默认 status: open（等于没开启，校验器不管它）。一旦你开了这场头脑
+# 风暴并把 status 改成 resolved，validate-product-state.ps1 就要求你必须已经在
+# analysis/ROUTE-DECISION.yaml 里落定一条真实路线（chosen_route 不是 UNKNOWN 且在 allowed_routes
+# 里、route_rationale 不是 UNVERIFIED）——讨论结束 != 完成，"开了会但没决定"正是本模式要挡的
+# "文档不是进度"。
+status: "open"                    # open（未开启/进行中） -> resolved（已收敛并落定 ROUTE-DECISION）
+question: "UNVERIFIED"            # 这场头脑风暴要解决的具体卡点，例："PE 无导出、找不到授权校验入口，走哪条路线复刻？"
+opened_at: "UNVERIFIED"
+resolved_at: "UNVERIFIED"
+# roles：参与对辩的对立角色与各自立场。默认四个角色见下（可增删，但保持彼此对立、能互相证伪）。
+# 每个角色写清它主张怎么切入、以及它对别人方案挑出的漏洞——对辩的价值在"互相找漏洞"，不是各说各话。
+roles: []
+# roles 示例（真正开会时按需增删）：
+#   - role: "static_structure"     # 静态结构派：先摸清 PE 头/导入导出/字符串/资源
+#     position: "先 dumpbin + DIE 摸清结构与是否加壳，再决定要不要上动态"
+#     critiques: "反对纯动态：没摸清结构就调试等于盲调"
+#   - role: "dynamic_debug"        # 动态调试派：受控运行看真实行为
+#     position: "直接 x64dbg/Procmon 跟授权分支，最快定位校验点"
+#     critiques: "承认若加壳则静态先行"
+#   - role: "known_tool_reuse"     # 已知工具复用派：先查本机/知识库已有能力
+#     position: "先 discover-tools + 查 verified 知识，别为这个目标重复造轮子"
+#     critiques: "提醒别为它新装一堆工具"
+#   - role: "skeptic"              # 怀疑者：专找漏洞和陷阱
+#     position: "任何 payload 结论先过 PROTECTION-PROFILE，警惕容器/壳层假发现"
+#     critiques: "指出前三方案都没先确认看到的是不是本体"
+# convergence：主对话综合各方后的结论一句话（为什么最终选这条切入/路线）。
+convergence: "UNVERIFIED"
+# route_decision_ref：信息性指针，标出这场头脑风暴的决定落在哪个文件。校验器不读这个字段——它按固定
+# 约定路径直接查 analysis/ROUTE-DECISION.yaml；收尾要去把那个文件写实（chosen_route + route_rationale）。
+route_decision_ref: "product-state/analysis/ROUTE-DECISION.yaml"
+source_of_truth: "product-state/analysis/BRAINSTORM-LOG.yaml"

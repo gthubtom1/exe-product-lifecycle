@@ -223,6 +223,12 @@ file under `product-state/` whose `sha256` matches -- the same anti-fabrication 
 ledger uses, so typing "反汇编过了" without saving the tool output does not count as reverse
 engineering.
 
+当六类迟迟给不出决定、找不到授权面、不确定走哪条复刻路线时，可以开一场**可选的头脑风暴**（默认关，
+详见 `references/analysis-brainstorm.md`）：主对话当桥、派 2–4 个对立角色互相找漏洞、1–2 轮快速收敛。
+它不是必经步骤，但一旦在 `analysis/BRAINSTORM-LOG.yaml` 把 `status` 改成 `resolved`，就必须已经在
+`analysis/ROUTE-DECISION.yaml` 里落定一条真实路线，否则 `validate-product-state.ps1` 判红——讨论结束
+不等于完成。
+
 ### 3. Record customizations as rules
 
 Every requested change must have an ID, category, stable anchor, operation,
@@ -396,6 +402,7 @@ evidence with material `UNVERIFIED` contract fields resolved.
 - `references/release-update.md`: releases, signed metadata, update channels,
   migration, and rollback.
 - `references/toolchain.md`: tool roles, EXE-type branching, and discovery rules.
+- `references/analysis-brainstorm.md`: optional, off by default. A bounded multi-role brainstorm for when analysis is stuck on how to begin; it must terminate in a decided `ROUTE-DECISION` or `validate-product-state.ps1` reds.
 - `references/knowledge-lifecycle.md`: evidence isolation, sanitization, candidate review, independent validation, promotion, deprecation, and GitHub sync.
 - `scripts/start-here.ps1`: the mandatory read-only entry point. Inspects the folder, lists
   unregistered inputs, selects the mode and prints the next literal commands in order. Run it

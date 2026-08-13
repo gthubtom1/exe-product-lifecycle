@@ -35,13 +35,21 @@ $checkGroupsPlanned = @(
     'core-artifact-integrity', 'lifecycle-gates', 'product-index', 'learning-scaffold', 'tool-inventory',
     'input-manifest', 'unregistered-root-inputs', 'baseline-manifest', 'migration-manifests', 'orphan-preserved-inputs',
     'release-manifests', 'product-id-sweep', 'status-gates', 'critical-contracts',
-    'blocking-items', 'maintenance-strategy', 'placeholder-sweep', 'host-docs', 'credential-sweep',
+    'analysis-brainstorm', 'blocking-items', 'maintenance-strategy', 'placeholder-sweep', 'host-docs', 'credential-sweep',
     'attestation'
 )
 $checkGroupsDone = New-Object System.Collections.Generic.List[string]
 $currentCheckGroup = ''
 $coverageEmitted = $false
 $verifiedStatuses = @('VERIFIED', 'VERIFIED_SIMULATION', 'RELEASED')
+# Canonical maintenance/reproduction route set. ROUTE-DECISION.chosen_route and MAINTENANCE-MODE.selected_strategy
+# share EXACTLY this set, so it lives here as the single source of truth: a gate must never read legality from a
+# product file's own allowed_* list (a product could empty that list to switch the check off -- RV brainstorm
+# red-team #2). UNKNOWN is the not-decided sentinel and is intentionally excluded from the legal routes.
+$script:CanonicalRoutes = @('SOURCE_AVAILABLE', 'RESOURCE_OVERLAY', 'BINARY_PATCH_RECORD', 'WRAPPER_LAUNCHER', 'REBUILD_REQUIRED')
+# Project-wide "not settled / not decided" sentinels (mirrors lifecycle-states.json unsettled_values). A field
+# carrying any of these has decided nothing, so a "settled" check that rejects only UNVERIFIED is too narrow.
+$script:UnsettledScalars = @('UNVERIFIED', 'PENDING', 'UNKNOWN', 'DISCOVERY_PENDING', 'TBD')
 
 function Enter-CheckGroup {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Name)
@@ -1308,6 +1316,51 @@ if ($stateStatus -in @('VERIFIED', 'RELEASED')) {
     }
 }
 
+# Analysis brainstorm (opt-in, off by default). BRAINSTORM-LOG.yaml is absent or status: open on a
+# normal product, and then this checks nothing -- the mode costs nothing until it is used. But the
+# moment an agent opens a brainstorm and marks it status: resolved, the discussion must have LANDED a
+# real route: a resolved brainstorm whose ROUTE-DECISION still reads chosen_route: UNKNOWN (or
+# route_rationale: UNVERIFIED) is "开了会但没决定" -- the exact 文档不是进度 anti-pattern this mode exists
+# to prevent. So resolved => ROUTE-DECISION.yaml must exist and carry a decided route (in allowed_routes,
+# not UNKNOWN) plus a real rationale. Runs in every status, not just VERIFIED: the point is to catch the
+# empty brainstorm at ANALYZED, before it drifts into fixtures/packaging. Delete this block and a
+# resolved-but-undecided brainstorm passes -- which is exactly what test-product-state-gates.ps1 BB1 reds on.
+# Track-agnostic on purpose: source products may opt into a brainstorm too (they also ship
+# analysis/ROUTE-DECISION.yaml via the shared product-scaffold), so this is NOT guarded by
+# $stateTrack -ne 'source' like the neighbouring reverse-engineering gates. Do not "fix" it into an
+# EXE-only guard to match its neighbours.
+Enter-CheckGroup 'analysis-brainstorm'
+$brainstormLogPath = Join-Path $stateRoot 'analysis/BRAINSTORM-LOG.yaml'
+if (Test-Path -LiteralPath $brainstormLogPath -PathType Leaf) {
+    $brainstormText = Read-StateText -Path $brainstormLogPath
+    # Read status tolerant of indentation: BRAINSTORM-LOG has exactly one `status:` key, and anchoring at
+    # column 0 (Get-YamlScalar) let a stray leading indent read as "absent" -> the whole gate skipped, a
+    # careless-indent silencer of a protective gate (RV brainstorm red-team, indented-status edge).
+    if ((Get-IndentedYamlScalar -Text $brainstormText -Key 'status') -match '^(?i)\s*resolved\s*$') {
+        $routeDecisionPath = Join-Path $stateRoot 'analysis/ROUTE-DECISION.yaml'
+        if (-not (Test-Path -LiteralPath $routeDecisionPath -PathType Leaf)) {
+            $errors.Add('analysis/BRAINSTORM-LOG.yaml 标记为 resolved，却没有 analysis/ROUTE-DECISION.yaml——头脑风暴收尾必须落到一条已决路线，讨论结束不等于完成（"开会但不决定"正是本模式要挡的"文档不是进度"）')
+        }
+        else {
+            $routeText = Read-StateText -Path $routeDecisionPath
+            $chosenRoute = (Get-YamlScalar -Text $routeText -Key 'chosen_route').Trim().ToUpperInvariant()
+            $routeRationale = (Get-YamlScalar -Text $routeText -Key 'route_rationale').Trim()
+            # chosen_route legality is judged against the canonical route set held in THIS script, never the
+            # file's own allowed_routes -- otherwise emptying/removing allowed_routes switches off the only
+            # route-legality check in the whole validator (RV brainstorm red-team #2). UNKNOWN is not a legal route.
+            if ($script:CanonicalRoutes -notcontains $chosenRoute) {
+                $errors.Add('analysis/BRAINSTORM-LOG.yaml 标记为 resolved，但 ROUTE-DECISION.yaml 的 chosen_route 仍是 UNKNOWN 或不是合法路线（必须是 SOURCE_AVAILABLE/RESOURCE_OVERLAY/BINARY_PATCH_RECORD/WRAPPER_LAUNCHER/REBUILD_REQUIRED 之一）——resolved 的头脑风暴必须选定一条合法路线，否则就是没决定')
+            }
+            # route_rationale must be genuinely settled: reject the whole project-wide unsettled sentinel set,
+            # not just UNVERIFIED, or a resolved brainstorm with route_rationale: PENDING/TBD/... slips through
+            # having decided nothing (RV brainstorm red-team #1). Same set the lifecycle table's unsettled_values uses.
+            if ([string]::IsNullOrWhiteSpace($routeRationale) -or ($script:UnsettledScalars -contains $routeRationale.ToUpperInvariant())) {
+                $errors.Add('analysis/BRAINSTORM-LOG.yaml 标记为 resolved，但 ROUTE-DECISION.yaml 的 route_rationale 仍是未决占位（UNVERIFIED/PENDING/UNKNOWN/DISCOVERY_PENDING/TBD 之一）或空——收尾必须写清为什么选这条、否掉别条的理由，讨论才算落地')
+            }
+        }
+    }
+}
+
 # A product that still lists what is blocking it, while claiming it is built or verified, is
 # telling two stories at once. The state field existed; nothing read it.
 Enter-CheckGroup 'blocking-items'
@@ -1323,7 +1376,9 @@ $maintenancePath = Join-Path $stateRoot 'MAINTENANCE-MODE.yaml'
 if (Test-Path -LiteralPath $maintenancePath -PathType Leaf) {
     $maintenanceText = Read-StateText -Path $maintenancePath
     $selectedStrategy = Get-YamlScalar -Text $maintenanceText -Key 'selected_strategy'
-    $allowedStrategies = @('SOURCE_AVAILABLE', 'RESOURCE_OVERLAY', 'BINARY_PATCH_RECORD', 'WRAPPER_LAUNCHER', 'REBUILD_REQUIRED', 'UNKNOWN')
+    # Same canonical set as ROUTE-DECISION.chosen_route (single source of truth above), plus UNKNOWN which is a
+    # legal MAINTENANCE-MODE value ("strategy not yet chosen") even though it is not a legal decided route.
+    $allowedStrategies = @($script:CanonicalRoutes) + @('UNKNOWN')
     if (-not [string]::IsNullOrWhiteSpace($selectedStrategy) -and $allowedStrategies -notcontains $selectedStrategy) {
         $errors.Add('MAINTENANCE-MODE.yaml has an unknown selected_strategy')
     }

@@ -5,10 +5,10 @@ Negative-path regression for the product state machine.
 
     powershell -NoProfile -ExecutionPolicy Bypass -File test-product-state-gates.ps1
 
-test-product-scaffold.ps1 only ever proved that a brand-new product passes. Every gate in
-validate-product-state.ps1 -- twenty-two check groups' worth -- had no test that made it fire, and
-a gate nobody fires is indistinguishable from a gate that is not there: that is exactly how
-INIT -> BUILD_READY stayed wide open while the validator reported zero errors.
+test-product-scaffold.ps1 only ever proved that a brand-new product passes. Every check group in
+validate-product-state.ps1 had no test that made it fire, and a gate nobody fires is
+indistinguishable from a gate that is not there: that is exactly how INIT -> BUILD_READY stayed
+wide open while the validator reported zero errors.
 
 Each scenario builds a throwaway product under $env:TEMP, breaks exactly one thing, and asserts
 that the tooling says so. Nothing outside the fixture root is written and no target EXE is run.
@@ -1413,6 +1413,102 @@ $root = New-SourceFixture -Name 'tr-genuine-source'
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'TR2-genuine-source-not-baseline-flagged' -Text $run.Text -Pattern '却登记了 EXE 基线哈希' -Absent
 Assert-Match -Name 'TR2-genuine-source-front-half-ok' -Text $run.Text -Pattern 'track: source，但缺少 source' -Absent
+
+# BB -- analysis brainstorm (opt-in). The mode is off by default (the scaffold ships status: open), and then
+# it changes nothing (BB3). But once an agent marks BRAINSTORM-LOG resolved it must have LANDED a real route:
+# resolved + chosen_route still UNKNOWN reds (BB1), resolved + ROUTE-DECISION deleted reds (BB4), resolved +
+# a decided route with a real rationale passes (BB2). Delete the analysis-brainstorm block in
+# validate-product-state.ps1 and BB1/BB4 stop reding -> this suite fails. This is the "开会但不决定"
+# (文档不是进度) gate the whole mode rests on.
+# BB1 -- resolved brainstorm with the route still undecided (scaffold chosen_route: UNKNOWN) must red.
+$root = New-Fixture -Name 'bb-brainstorm-resolved-no-route'
+$bbLog = Join-Path $root 'product-state\analysis\BRAINSTORM-LOG.yaml'
+[IO.File]::WriteAllText($bbLog, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $bbLog) -replace '(?m)^status:\s*".*?"', 'status: "resolved"'), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BB1-resolved-undecided-route-reds' -Text $run.Text -Pattern 'chosen_route 仍是 UNKNOWN'
+Assert-Match -Name 'BB1-overall-failed' -Text $run.Text -Pattern 'RESULT: failed'
+
+# BB2 -- resolved brainstorm that DID land a decided route + real rationale passes the gate.
+$root = New-Fixture -Name 'bb-brainstorm-resolved-decided'
+$bbLog = Join-Path $root 'product-state\analysis\BRAINSTORM-LOG.yaml'
+[IO.File]::WriteAllText($bbLog, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $bbLog) -replace '(?m)^status:\s*".*?"', 'status: "resolved"'), (New-Object Text.UTF8Encoding($false)))
+$bbRoute = Join-Path $root 'product-state\analysis\ROUTE-DECISION.yaml'
+$bbRouteText = Get-Content -Raw -Encoding UTF8 -LiteralPath $bbRoute
+$bbRouteText = $bbRouteText -replace '(?m)^chosen_route:\s*".*?"', 'chosen_route: "WRAPPER_LAUNCHER"'
+$bbRouteText = $bbRouteText -replace '(?m)^route_rationale:\s*".*?"', 'route_rationale: "外壳授权门最快达到用户可实测复刻，核心仍是原程序"'
+[IO.File]::WriteAllText($bbRoute, $bbRouteText, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BB2-decided-route-no-brainstorm-red' -Text $run.Text -Pattern 'BRAINSTORM-LOG.yaml 标记为 resolved' -Absent
+Assert-Match -Name 'BB2-overall-passed' -Text $run.Text -Pattern 'RESULT: passed'
+
+# BB3 -- the scaffold ships status: open, so a fresh product's dormant log must gate nothing.
+$root = New-Fixture -Name 'bb-brainstorm-open-dormant'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BB3-open-log-is-quiet' -Text $run.Text -Pattern 'BRAINSTORM-LOG.yaml 标记为 resolved' -Absent
+Assert-Match -Name 'BB3-fresh-still-passes' -Text $run.Text -Pattern 'RESULT: passed'
+
+# BB4 -- resolved brainstorm but ROUTE-DECISION.yaml removed entirely: nowhere the decision landed, so red.
+$root = New-Fixture -Name 'bb-brainstorm-resolved-route-missing'
+$bbLog = Join-Path $root 'product-state\analysis\BRAINSTORM-LOG.yaml'
+[IO.File]::WriteAllText($bbLog, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $bbLog) -replace '(?m)^status:\s*".*?"', 'status: "resolved"'), (New-Object Text.UTF8Encoding($false)))
+Remove-Item -LiteralPath (Join-Path $root 'product-state\analysis\ROUTE-DECISION.yaml') -Force
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BB4-resolved-missing-route-reds' -Text $run.Text -Pattern '却没有 analysis/ROUTE-DECISION.yaml'
+
+# BB5-BB8 pin the gate's sub-clauses INDEPENDENTLY (per collaboration-discipline §5: 每条保护配一条改坏必红).
+# BB1 fires both the chosen_route and route_rationale clauses at once, so it could not tell which one broke;
+# these isolate each.
+# BB5 -- route_rationale sub-clause (RV red-team #1 fix): a resolved brainstorm with a LEGAL route but a
+# sentinel rationale (PENDING) reds on the rationale clause ONLY. Narrow the check back to just 'UNVERIFIED'
+# and BB5 greens. Legal route keeps the chosen_route clause quiet, isolating this one.
+$root = New-Fixture -Name 'bb-brainstorm-rationale-sentinel'
+$bbLog = Join-Path $root 'product-state\analysis\BRAINSTORM-LOG.yaml'
+[IO.File]::WriteAllText($bbLog, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $bbLog) -replace '(?m)^status:\s*".*?"', 'status: "resolved"'), (New-Object Text.UTF8Encoding($false)))
+$bbRoute = Join-Path $root 'product-state\analysis\ROUTE-DECISION.yaml'
+$bbRouteText = Get-Content -Raw -Encoding UTF8 -LiteralPath $bbRoute
+$bbRouteText = $bbRouteText -replace '(?m)^chosen_route:\s*".*?"', 'chosen_route: "WRAPPER_LAUNCHER"'
+$bbRouteText = $bbRouteText -replace '(?m)^route_rationale:\s*".*?"', 'route_rationale: "PENDING"'
+[IO.File]::WriteAllText($bbRoute, $bbRouteText, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BB5-rationale-sentinel-reds' -Text $run.Text -Pattern 'route_rationale 仍是未决占位'
+Assert-Match -Name 'BB5-route-clause-isolated' -Text $run.Text -Pattern 'chosen_route 仍是 UNKNOWN' -Absent
+
+# BB6 -- chosen_route sub-clause + proves it is NOT switch-off-able (RV red-team #2 fix): a bogus route with
+# allowed_routes EMPTIED must still red, because legality is judged against the script's canonical route set,
+# not the file's own allowed_routes list. Real rationale isolates this clause. Revert to reading allowed_routes
+# (the '.Count -gt 0' guard) and BB6 greens (empty list -> membership check skipped -> bogus route passes).
+$root = New-Fixture -Name 'bb-brainstorm-bogus-route-empty-allowed'
+$bbLog = Join-Path $root 'product-state\analysis\BRAINSTORM-LOG.yaml'
+[IO.File]::WriteAllText($bbLog, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $bbLog) -replace '(?m)^status:\s*".*?"', 'status: "resolved"'), (New-Object Text.UTF8Encoding($false)))
+$bbRoute = Join-Path $root 'product-state\analysis\ROUTE-DECISION.yaml'
+$bbRouteText = Get-Content -Raw -Encoding UTF8 -LiteralPath $bbRoute
+$bbRouteText = $bbRouteText -replace '(?m)^chosen_route:\s*".*?"', 'chosen_route: "banana-not-a-route"'
+$bbRouteText = $bbRouteText -replace '(?m)^route_rationale:\s*".*?"', 'route_rationale: "外壳授权门最快达到用户可实测复刻"'
+$bbRouteText = $bbRouteText -replace '(?s)allowed_routes:.*?\r?\nroute_definitions:', "allowed_routes: []`nroute_definitions:"
+[IO.File]::WriteAllText($bbRoute, $bbRouteText, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BB6-bogus-route-empty-allowed-reds' -Text $run.Text -Pattern '不是合法路线'
+Assert-Match -Name 'BB6-rationale-clause-isolated' -Text $run.Text -Pattern 'route_rationale 仍是未决占位' -Absent
+
+# BB8 -- indented-status hardening (RV red-team edge): a resolved brainstorm whose status line is indented must
+# still fire the gate. status is read with Get-IndentedYamlScalar so a stray indent cannot silence a protective
+# gate. Revert to Get-YamlScalar (column-0 only) and BB8 greens (indented status reads as absent -> gate skipped).
+$root = New-Fixture -Name 'bb-brainstorm-indented-status'
+$bbLog = Join-Path $root 'product-state\analysis\BRAINSTORM-LOG.yaml'
+[IO.File]::WriteAllText($bbLog, ((Get-Content -Raw -Encoding UTF8 -LiteralPath $bbLog) -replace '(?m)^status:\s*".*?"', '  status: "resolved"'), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BB8-indented-status-still-fires' -Text $run.Text -Pattern 'chosen_route 仍是 UNKNOWN'
+
+# SHB -- the opt-in brainstorm hint start-here prints at the analysis pressure point. Advisory, but the house
+# habit pins even advisory prints (G1 pins NEXT-ACTION). Absent at INIT (six categories not yet the pending
+# step); present at BASELINE_CREATED (next=ANALYZED, ANALYSIS-FINDINGS pending). Delete the two hint Write-Output
+# lines in start-here.ps1 and SHB2 greens->reds.
+$root = New-Fixture -Name 'shb-brainstorm-hint'
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'SHB1-hint-absent-at-init' -Text $run.Text -Pattern '有界头脑风暴' -Absent
+$null = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'BASELINE_CREATED', '-Mode', 'resume')
+$run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'SHB2-hint-present-at-analysis' -Text $run.Text -Pattern '有界头脑风暴'
 
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''
