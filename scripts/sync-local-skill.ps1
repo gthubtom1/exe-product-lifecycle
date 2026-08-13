@@ -35,7 +35,10 @@ $sourceRelative = @($sourceFiles | ForEach-Object { $_.FullName.Substring($sourc
 # A destination that is a clone updates itself with git pull, and its history is what makes the
 # experience captured there survivable. Copying files over it would leave it permanently dirty and
 # make the next publish ambiguous about what is actually being published.
-if (Test-Path -LiteralPath (Join-Path $destination '.git') -PathType Container) {
+if (Test-Path -LiteralPath (Join-Path $destination '.git')) {
+    # -PathType Container was wrong: a git worktree/submodule checkout has .git as a FILE ("gitdir: ...")
+    # not a directory, so it slipped past this guard and got copied over -- overwriting tracked files and
+    # deleting uncommitted work, the exact dirty-clone outcome this guard exists to prevent. (RV sync F3.)
     Write-Output "错误: 目标是一个 git clone，不能用复制的方式覆盖它: $destination"
     Write-Output '原因: clone 靠 git pull 更新；复制会把它变成一直有改动的状态，之后也说不清发布的到底是什么。'
     Write-Output '怎么办: 更新代码用 git pull；发布这台机器学到的经验用 scripts/publish-knowledge.ps1。'
@@ -51,6 +54,24 @@ if ($destinationEntries.Count -gt 0 -and -not (Test-Path -LiteralPath (Join-Path
     Write-Output "错误: 目标目录非空且不含 SKILL.md，看起来不是一个技能安装目录，已拒绝同步（避免误删无关文件）: $destination"
     Write-Output '怎么办: 确认 -DestinationRoot 指向的是本技能的安装目录；要装到全新位置就指向一个空目录。'
     exit 1
+}
+# RV sync F1: "has a SKILL.md" is too weak a proxy for "is THIS skill's install dir" -- another skill's
+# install also has one. Mis-pointing -DestinationRoot at it would delete that skill's files and report
+# success. Before deleting anything, require the SKILL.md to actually be exe-product-lifecycle (frontmatter
+# name), so a non-empty destination must be an empty dir OR a genuine exe-product-lifecycle install.
+$destSkillMd = Join-Path $destination 'SKILL.md'
+if ($destinationEntries.Count -gt 0 -and (Test-Path -LiteralPath $destSkillMd -PathType Leaf)) {
+    $destSkillName = ''
+    $destFrontmatter = [regex]::Match((Get-Content -Raw -Encoding UTF8 -LiteralPath $destSkillMd), '(?s)^\s*---\r?\n(.*?)\r?\n---')
+    if ($destFrontmatter.Success) {
+        $destNameLine = [regex]::Match($destFrontmatter.Groups[1].Value, '(?m)^name:[ \t]*(\S+)[ \t]*$')
+        if ($destNameLine.Success) { $destSkillName = $destNameLine.Groups[1].Value.Trim().Trim('"').Trim("'") }
+    }
+    if ($destSkillName -ne 'exe-product-lifecycle') {
+        Write-Output "错误: 目标目录有 SKILL.md 但其 name 不是 exe-product-lifecycle（读到: '$destSkillName'），看起来是另一个技能的安装目录，已拒绝同步（避免删掉别的技能的文件）: $destination"
+        Write-Output '怎么办: 确认 -DestinationRoot 指向的是 exe-product-lifecycle 的安装目录；要装到全新位置就指向一个空目录。'
+        exit 1
+    }
 }
 
 $layoutGate = Join-Path $source 'scripts\validate-skill-layout.ps1'
@@ -83,7 +104,12 @@ if ($PSCmdlet.ShouldProcess($destination, 'Synchronize EXE lifecycle skill files
         # first written. Mirroring a delete for anything the source happens not to have would throw
         # away the one thing this skill is supposed to accumulate -- and it is unrecoverable,
         # because until it is published nothing else has a copy. Keep it and say so.
-        if ($relative -match '^knowledge\\(candidates|verified|deprecated)\\[^\\]+\.json$') {
+        # RV sync F2: preservation used to be shape-sensitive -- only knowledge/{candidates,verified,
+        # deprecated}/<single>.json survived, while a knowledge file at the knowledge/ root, in a deeper
+        # subdir, or a non-json note was silently deleted (output only ever listed what it kept). Preserve
+        # ANY file under knowledge/ that the source does not have, matching the README's broad promise, so
+        # local learning is never lost without a word.
+        if ($relative -match '^knowledge\\') {
             [void]$preservedLearning.Add($relative)
             continue
         }

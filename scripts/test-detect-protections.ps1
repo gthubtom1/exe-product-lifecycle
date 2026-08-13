@@ -167,6 +167,29 @@ Assert-Match -Name 'E2-verdict-is-overlay' -Text $e2Profile -Pattern 'verdict:\s
 $run = Invoke-Script -Name 'detect-protections.ps1' -ScriptArgs @('-ProductRoot', $e2)
 Assert-Match -Name 'E3-reassess-refused-without-force' -Text $run.Text -Pattern '已经探测过'
 
+# E4 -- RV F1: a disk-discovered (source=fallback-search), unsigned diec.exe must be refused execution by
+# DEFAULT (planted-binary risk) and only run under -AllowUnsignedDiscoveredTools. Revert the default-skip
+# branch in Approve-DiscoveredTool and the default run stops skipping, so E4-default goes red.
+$e4 = Join-Path $FixtureRoot 'e4-unsigned-discovered'
+New-Item -ItemType Directory -Force -Path $e4 | Out-Null
+$e4Core = Join-Path $e4 'core.exe'
+[IO.File]::WriteAllText($e4Core, 'MZ inert e4 fixture core', [Text.Encoding]::ASCII)
+$null = Invoke-Script -Name 'init-product.ps1' -ScriptArgs @('-ProductRoot', $e4, '-ProductId', 'protect-e4', '-CorePath', $e4Core)
+$e4Die = Join-Path $e4 'faketools\diec.exe'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $e4Die) | Out-Null
+[IO.File]::WriteAllText($e4Die, 'not a real DIE -- inert unsigned placeholder', [Text.Encoding]::ASCII)
+$e4Inv = Join-Path $e4 'product-state\tooling\TOOL-INVENTORY.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $e4Inv) | Out-Null
+[IO.File]::WriteAllText($e4Inv, ('{ "schema_version": 1, "tools": [ { "tool_id": "native-static", "available": true, "source": "fallback-search", "path": ' + (ConvertTo-Json $e4Die) + ' } ] }'), (New-Object Text.UTF8Encoding($false)))
+$e4ProfilePath = Join-Path $e4 'product-state\PROTECTION-PROFILE.yaml'
+$run = Invoke-Script -Name 'detect-protections.ps1' -ScriptArgs @('-ProductRoot', $e4, '-Force')
+$e4Profile = Get-Content -Raw -Encoding UTF8 -LiteralPath $e4ProfilePath
+Assert-Match -Name 'E4-default-skips-unsigned-discovered' -Text $e4Profile -Pattern '已默认跳过磁盘扫描发现'
+Add-Result -Name 'E4-default-no-stack-trace' -Passed (-not $run.HasStackTrace) -Expected 'clean' -Actual $(if ($run.HasStackTrace) { 'stack-trace' } else { 'clean' })
+$null = Invoke-Script -Name 'detect-protections.ps1' -ScriptArgs @('-ProductRoot', $e4, '-Force', '-AllowUnsignedDiscoveredTools')
+$e4ProfileAllow = Get-Content -Raw -Encoding UTF8 -LiteralPath $e4ProfilePath
+Assert-Match -Name 'E4-allow-flag-runs-unsigned-discovered' -Text $e4ProfileAllow -Pattern '已默认跳过磁盘扫描发现' -Absent
+
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''
 Write-Output ("RESULT: {0} passed, {1} failed" -f @($script:Results | Where-Object { $_.Passed }).Count, $failed.Count)

@@ -128,7 +128,8 @@ function Get-IndentedYamlScalar {
 function Test-BindingStrengthEvidence {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
-        [Parameter(Mandatory = $true)][string[]]$UnsettledValues
+        [Parameter(Mandatory = $true)][string[]]$UnsettledValues,
+        [string]$ProtectionVerdict = ''
     )
 
     # The whole point of tiered binding is to stop "claimed strong, proven nothing". A claimed
@@ -154,6 +155,18 @@ function Test-BindingStrengthEvidence {
     foreach ($field in $required) {
         if (-not (& $isSettled (Get-IndentedYamlScalar -Text $Text -Key $field))) { return $false }
     }
+    # Honesty ceiling: a claimed/verified tier must not exceed the binding the target can actually bear.
+    # A settled protection_ceiling caps the tier (a contract that writes ceiling C yet claims A is exactly
+    # the over-claim to reject), and a WRAPPER_ONLY protection verdict independently caps at C. Nothing here
+    # can raise the ceiling. (RV auth-handoff F-AH-1/3.)
+    $rank = @{ 'A' = 3; 'B' = 2; 'C' = 1 }
+    $ceiling = 3
+    $ceilingField = (Get-IndentedYamlScalar -Text $Text -Key 'protection_ceiling').Trim().ToUpperInvariant()
+    if ($ceilingField -in @('A', 'B', 'C')) { $ceiling = [Math]::Min($ceiling, $rank[$ceilingField]) }
+    if ($ProtectionVerdict -match '(?i)WRAPPER_ONLY') { $ceiling = [Math]::Min($ceiling, $rank['C']) }
+    if ($rank[$claimed] -gt $ceiling) { return $false }
+    $verifiedTier = (Get-IndentedYamlScalar -Text $Text -Key 'verified_tier').Trim().ToUpperInvariant()
+    if (($verifiedTier -in @('A', 'B', 'C')) -and ($rank[$verifiedTier] -gt $ceiling)) { return $false }
     return $true
 }
 
@@ -362,8 +375,19 @@ function Test-ProtectionSaysPacked {
     if ((Get-IndentedYamlScalar -Text $Text -Key 'verdict') -match '(?i)WRAPPER_ONLY') { return $true }
     $packer = (Get-IndentedYamlScalar -Text $Text -Key 'packer').Trim().ToLowerInvariant()
     if (-not [string]::IsNullOrWhiteSpace($packer) -and $packer -notin @('none-detected', 'none', 'unknown', 'unverified')) { return $true }
+    $entropyRaw = (Get-IndentedYamlScalar -Text $Text -Key 'entropy_total').Trim()
     $entropy = 0.0
-    if ([double]::TryParse((Get-IndentedYamlScalar -Text $Text -Key 'entropy_total'), [ref]$entropy) -and $entropy -gt 7.2) { return $true }
+    $entropyParsed = [double]::TryParse($entropyRaw, [ref]$entropy)
+    if ($entropyParsed -and $entropy -gt 7.2) { return $true }
+    # Fail-safe on insufficient evidence: a blind detector (no DIE -> verdict UNKNOWN, packer unknown,
+    # entropy UNVERIFIED) must NOT read as "not packed", or the unpacking gate silently accepts
+    # not_applicable on a possibly-packed target. Treat "could not assess" as "possibly packed" so the
+    # unpacking decision stays a real done/blocked. A genuinely-assessed clean target has a real verdict
+    # (OVERLAY_ONLY/CAN_PATCH), a named/none-detected packer and a parsed entropy, so it still reads
+    # not-packed and is unaffected. (RV protections finding P-1 fail-open.)
+    $verdict = (Get-IndentedYamlScalar -Text $Text -Key 'verdict').Trim().ToUpperInvariant()
+    if ($verdict -in @('UNKNOWN', 'UNVERIFIED', 'PENDING', '')) { return $true }
+    if (($packer -in @('unknown', 'unverified')) -and (-not $entropyParsed -or $entropyRaw -match '(?i)UNVERIFIED')) { return $true }
     return $false
 }
 
@@ -469,7 +493,10 @@ function Test-LifecycleRequirement {
         }
         'binding_strength_backed' {
             if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
-            return (Test-BindingStrengthEvidence -Text (Read-TextFileSafe -Path $full) -UnsettledValues $UnsettledValues)
+            $bsProtVerdict = ''
+            $bsProtPath = Join-Path $StateRoot 'PROTECTION-PROFILE.yaml'
+            if (Test-Path -LiteralPath $bsProtPath -PathType Leaf) { $bsProtVerdict = (Get-IndentedYamlScalar -Text (Read-TextFileSafe -Path $bsProtPath) -Key 'verdict') }
+            return (Test-BindingStrengthEvidence -Text (Read-TextFileSafe -Path $full) -UnsettledValues $UnsettledValues -ProtectionVerdict $bsProtVerdict)
         }
         'list_records_have_fields' {
             # (Phase 2 source gates) A block list under $Requirement.key must be non-empty AND every item

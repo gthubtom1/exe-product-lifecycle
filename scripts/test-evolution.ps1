@@ -100,6 +100,21 @@ try {
     $find = Invoke-TestScript -Name 'verified_pattern_is_matchable' -Script (Join-Path $testSkill 'scripts\find-verified-patterns.ps1') -Arguments @{ Category = 'packaging'; Tag = 'nested-runtime'; SkillRoot = $testSkill }
     if (($find -join "`n") -notmatch [regex]::Escape($experienceId)) { throw 'Verified pattern was not returned by lookup' }
 
+    # RV evolution item 1 (leak, HIGH): the public-content gate must scan the WHOLE canonical record, not
+    # only the public projection (title/summary/pattern/...). Hide a sensitive URL in a NON-public field
+    # (created_at, which publish still pushes) and validate-knowledge must red on a privacy finding. Revert
+    # the whole-record scan in validate-knowledge.ps1 and this leak sails straight through the gate.
+    $verifiedLeakFile = @(Get-ChildItem -LiteralPath (Join-Path $testSkill 'knowledge\verified') -File -Filter '*.json')[0].FullName
+    $verifiedLeakBackup = Get-Content -Raw -Encoding UTF8 -LiteralPath $verifiedLeakFile
+    $verifiedLeaked = $verifiedLeakBackup -replace '("created_at":\s*")([^"]*)(")', '${1}2026-01-01T00:00:00Z exfil https://c2.attacker.example/beacon${3}'
+    if ($verifiedLeaked -eq $verifiedLeakBackup) { throw 'leak fixture did not modify created_at' }
+    [System.IO.File]::WriteAllText($verifiedLeakFile, $verifiedLeaked, (New-Object System.Text.UTF8Encoding($false)))
+    & $shellExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $testSkill 'scripts\rebuild-knowledge-index.ps1') -SkillRoot $testSkill | Out-Null
+    $leakOut = Invoke-TestScript -Name 'reject_leak_in_nonpublic_field' -Script (Join-Path $testSkill 'scripts\validate-knowledge.ps1') -Arguments @{ SkillRoot = $testSkill } -ExpectFailure $true
+    if (@($leakOut | Where-Object { [string]$_ -match 'privacy finding' }).Count -eq 0) { throw 'leak hidden in created_at was not reported as a public knowledge privacy finding' }
+    [System.IO.File]::WriteAllText($verifiedLeakFile, $verifiedLeakBackup, (New-Object System.Text.UTF8Encoding($false)))
+    & $shellExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $testSkill 'scripts\rebuild-knowledge-index.ps1') -SkillRoot $testSkill | Out-Null
+
     $findScript = Join-Path $testSkill 'scripts\find-verified-patterns.ps1'
     $indexPath = Join-Path $testSkill 'knowledge\INDEX.json'
     $originalIndex = Get-Content -Raw -Encoding UTF8 -LiteralPath $indexPath

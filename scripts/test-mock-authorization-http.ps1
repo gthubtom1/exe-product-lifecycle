@@ -1,4 +1,4 @@
-#requires -Version 5
+﻿#requires -Version 5
 
 # End-to-end regression for the local temporary authorization mock SERVER
 # (acceptance tier 1, transport layer).
@@ -182,6 +182,38 @@ finally {
     if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $stdout -Force -ErrorAction SilentlyContinue
 }
+
+# --- Startup diagnostics (RV D1/E1). These run their own short-lived processes because they assert on how
+# the server REPORTS a bind failure / IPv6 edge, not on request handling. Both stdout and stderr are
+# captured, since an uncaught startup exception (the E1 regression) surfaces on stderr. ---
+$diagStdout = Join-Path ([System.IO.Path]::GetTempPath()) ("mock-auth-diag-{0}.out" -f [guid]::NewGuid().ToString('N'))
+$diagStderr = Join-Path ([System.IO.Path]::GetTempPath()) ("mock-auth-diag-{0}.err" -f [guid]::NewGuid().ToString('N'))
+function Get-DiagText { ((Get-Content -Raw -Encoding UTF8 -LiteralPath $diagStdout -ErrorAction SilentlyContinue) + "`n" + (Get-Content -Raw -Encoding UTF8 -LiteralPath $diagStderr -ErrorAction SilentlyContinue)) }
+
+# D1: a port already held must be reported as "port in use" (换端口), NOT the neutral/permission hint.
+# Revert the catch branching in mock-authorization-server.ps1 and the '端口被占用' wording disappears.
+$heldPort = Get-FreePort
+$hold = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, $heldPort)
+$hold.Start()
+try {
+    $d1 = Start-Process -FilePath $psExe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$serverScript`"", '-Port', "$heldPort", '-Quiet') -PassThru -WindowStyle Hidden -RedirectStandardOutput $diagStdout -RedirectStandardError $diagStderr
+    $d1.WaitForExit(8000) | Out-Null
+    if (-not $d1.HasExited) { Stop-Process -Id $d1.Id -Force -ErrorAction SilentlyContinue }
+    $d1Text = Get-DiagText
+    Assert-Value 'D1-port-in-use-distinguished' 'yes' $(if ($d1Text -match '端口被占用') { 'yes' } else { 'no' })
+    Assert-Value 'D1-not-mislabelled-permission' 'yes' $(if ($d1Text -notmatch '权限不足') { 'yes' } else { 'no' })
+}
+finally { $hold.Stop() }
+
+# E1: -BindAddress ::1 must NOT throw a raw "valid hostname" ArgumentException (it used to, because the IPv6
+# prefix was unbracketed and Prefixes.Add sat outside try/catch). Revert the E1 fix and this reds.
+$e1Port = Get-FreePort
+$e1 = Start-Process -FilePath $psExe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$serverScript`"", '-BindAddress', '::1', '-Port', "$e1Port", '-Quiet') -PassThru -WindowStyle Hidden -RedirectStandardOutput $diagStdout -RedirectStandardError $diagStderr
+Start-Sleep -Milliseconds 1200
+if (-not $e1.HasExited) { Stop-Process -Id $e1.Id -Force -ErrorAction SilentlyContinue }
+$e1Text = Get-DiagText
+Assert-Value 'E1-ipv6-no-raw-hostname-crash' 'yes' $(if ($e1Text -notmatch '(?i)valid hostname|ArgumentException') { 'yes' } else { 'no' })
+Remove-Item -LiteralPath $diagStdout, $diagStderr -Force -ErrorAction SilentlyContinue
 
 Write-Output ''
 Write-Output ("RESULT: {0} passed, {1} failed" -f $script:PassCount, $script:FailCount)

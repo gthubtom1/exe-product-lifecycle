@@ -1178,6 +1178,29 @@ if ($stateStatus -in @('VERIFIED', 'RELEASED')) {
     }
 }
 
+# binding_summary in AUTH-ADAPTER-REQUEST.md is what the authorization platform machine-reads; it MUST match
+# the sole grading source LAUNCH-CONTRACT.yaml binding_strength verbatim and may not report a higher tier.
+# Only enforce once the summary actually asserts a tier (an unset UNKNOWN summary reports nothing, so there is
+# no fake tier to catch -- which also keeps a fresh/unfilled summary from tripping the gate). (RV auth F-AH-2.)
+$adapterReqPath = Join-Path $stateRoot 'auth/AUTH-ADAPTER-REQUEST.md'
+$launchContractPath = Join-Path $stateRoot 'auth/LAUNCH-CONTRACT.yaml'
+if ((Test-Path -LiteralPath $adapterReqPath -PathType Leaf) -and (Test-Path -LiteralPath $launchContractPath -PathType Leaf)) {
+    $adapterReqText = Read-StateText -Path $adapterReqPath
+    if ($adapterReqText -match '(?m)^\s*binding_summary:') {
+        $summaryClaimedTier = (Get-IndentedYamlScalar -Text $adapterReqText -Key 'claimed_tier').Trim().ToUpperInvariant()
+        if ($summaryClaimedTier -in @('A', 'B', 'C')) {
+            $launchContractText = Read-StateText -Path $launchContractPath
+            foreach ($bindingField in @('claimed_tier', 'verified_tier', 'bypass_risk')) {
+                $summaryValue = (Get-IndentedYamlScalar -Text $adapterReqText -Key $bindingField).Trim()
+                $contractValue = (Get-IndentedYamlScalar -Text $launchContractText -Key $bindingField).Trim()
+                if ($summaryValue -ne $contractValue) {
+                    $errors.Add("AUTH-ADAPTER-REQUEST.md 的 binding_summary.$bindingField 与 LAUNCH-CONTRACT.yaml 的 binding_strength.$bindingField 不一致（机读摘要必须与唯一判级真相源逐字一致、不得另报更高级别）")
+                }
+            }
+        }
+    }
+}
+
 # (License gate intentionally NOT implemented -- user decision.) The source-reuse workflow is "learn the
 # approach, write your own code", not bulk-copying a repo, so upstream license obligations basically do not
 # trigger. Copyright/license is out of scope entirely (no license field anywhere, no gate); only a lightweight

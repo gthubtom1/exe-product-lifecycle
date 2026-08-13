@@ -62,6 +62,24 @@ function Get-VerifiedEntryErrors {
     $record = Read-JsonFile -Path $recordPath
     if ([string](Get-EntryField -Entry $record -Name 'experience_id') -ne $experienceId) { [void]$issues.Add('record experience_id does not match the index entry') }
     if ([string](Get-EntryField -Entry $record -Name 'status') -ne 'verified') { [void]$issues.Add('record status is not verified') }
+    if ($issues.Count -gt 0) { return @($issues) }
+
+    # Consistency with the publish gate: find-verified must never serve a "verified" record that
+    # validate-knowledge would reject. Re-run the same shape + independent-evidence threshold here, so the
+    # consumer side is not looser than the publish side. (RV evolution find-vs-validate gap.)
+    foreach ($shapeError in @(Test-ExperienceRecord -Record $record -ExpectedStatus 'verified')) {
+        [void]$issues.Add("record fails publish-gate shape: $shapeError")
+    }
+    $evidenceItems = @()
+    if ($record.PSObject.Properties.Name -contains 'source_evidence' -and $null -ne $record.source_evidence) {
+        $evidenceItems = @($record.source_evidence | Where-Object { $null -ne $_ })
+    }
+    $realSources = @($evidenceItems | Where-Object { (Get-EntryField -Entry $_ -Name 'source_kind') -eq 'real_product' -and (Get-EntryField -Entry $_ -Name 'evidence_role') -eq 'supporting' } | ForEach-Object { Get-EntryField -Entry $_ -Name 'source_id' } | Where-Object { $_ } | Select-Object -Unique)
+    $positiveFixtures = @($evidenceItems | Where-Object { (Get-EntryField -Entry $_ -Name 'source_kind') -eq 'fixture' -and (Get-EntryField -Entry $_ -Name 'evidence_role') -eq 'positive_fixture' })
+    $negativeFixtures = @($evidenceItems | Where-Object { (Get-EntryField -Entry $_ -Name 'source_kind') -eq 'fixture' -and (Get-EntryField -Entry $_ -Name 'evidence_role') -eq 'negative_fixture' })
+    if ($realSources.Count -lt 2 -or $positiveFixtures.Count -lt 1 -or $negativeFixtures.Count -lt 1) {
+        [void]$issues.Add('record does not meet independent evidence threshold (same bar as validate-knowledge)')
+    }
     return @($issues)
 }
 

@@ -56,15 +56,38 @@ function ConvertTo-HashtableDeep {
 }
 
 $state = New-MockAuthState -NowUtc ([System.DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))
-$prefix = "http://${BindAddress}:${Port}/"
+# RV E1: an IPv6 literal must be bracketed in a URL prefix (http://[::1]:port/). Unbracketed, HttpListener
+# throws at Prefixes.Add -- which used to be OUTSIDE the try below, so the user saw a raw PowerShell stack
+# instead of a friendly error. Bracket IPv6 here, and build/Add the prefix inside the try so every prefix
+# or start failure goes through the handler.
+$prefixHost = if ($BindAddress -match ':' -and $BindAddress -notmatch '^\[.*\]$') { "[$BindAddress]" } else { $BindAddress }
+$prefix = "http://${prefixHost}:${Port}/"
 $listener = New-Object System.Net.HttpListener
-$listener.Prefixes.Add($prefix)
 try {
+    $listener.Prefixes.Add($prefix)
     $listener.Start()
 } catch {
     Write-Output "ERROR: cannot listen on $prefix"
     Write-Output $_.Exception.Message
-    Write-Output 'HINT: pick another port with -Port, or check that nothing else owns this address.'
+    # RV D1: distinguish the two failure modes the README promises to tell apart. Sending the user to
+    # "pick another port" when the real problem is missing permission is exactly the wasted port-change the
+    # doc says will not happen. HttpListenerException.ErrorCode: 5 = access denied (needs admin / URL ACL --
+    # a port change will NOT help); 32/48/183/10048 = address already in use (a port change or freeing the
+    # owner is the fix). Anything else (e.g. "request not supported") gets a neutral hint, not "change port".
+    $listenerError = $_.Exception
+    $listenerErrorCode = $null
+    if ($listenerError -is [System.Net.HttpListenerException]) { $listenerErrorCode = $listenerError.ErrorCode }
+    elseif ($listenerError.InnerException -is [System.Net.HttpListenerException]) { $listenerErrorCode = $listenerError.InnerException.ErrorCode }
+    $listenerErrorMessage = [string]$listenerError.Message
+    if ($listenerErrorCode -eq 5 -or $listenerErrorMessage -match '(?i)access is denied|拒绝访问') {
+        Write-Output 'HINT(权限不足): 绑定该地址需要管理员权限或预留 URL ACL；换端口无效。请以管理员身份运行，或执行 netsh http add urlacl url=<上面这个地址> user=<你的账户> 后重试。'
+    }
+    elseif (($listenerErrorCode -in @(32, 48, 183, 10048)) -or $listenerErrorMessage -match '(?i)being used by another process|already in use|正被另一') {
+        Write-Output 'HINT(端口被占用): 该地址/端口已被占用。用 -Port 换一个端口，或停止占用它的进程后重试。'
+    }
+    else {
+        Write-Output 'HINT: 换端口用 -Port；若换端口仍失败，多半是权限不足或该地址不受支持，请检查是否需要管理员、或改用默认 127.0.0.1。'
+    }
     exit 1
 }
 

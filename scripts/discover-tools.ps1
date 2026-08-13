@@ -29,6 +29,13 @@ param(
     # evidence about the whole machine.
     [switch]$SearchRootsOnly,
 
+    # Use Everything's CLI (es.exe) to locate tools from its disk index instead of only the scoped
+    # directory walk. That turns a whole-disk sweep (otherwise a multi-minute -DeepScan) into an instant
+    # lookup. Opt-in and graceful: if es.exe (or the Everything service) is unavailable, discovery falls
+    # back to the directory walk unchanged. Ignored under -SearchRootsOnly (that mode is scope-limited on
+    # purpose). Index hits are recorded as source=fallback-search, so the same signature gate applies.
+    [switch]$UseEverything,
+
     [switch]$ReuseInventory,
 
     [ValidateRange(1, 8760)]
@@ -413,8 +420,55 @@ $discoveryInputs = [pscustomobject]@{
     search_generation = $SearchGeneration
     deep_scan = [bool]$DeepScan
     search_roots_only = [bool]$SearchRootsOnly
+    use_everything = [bool]$UseEverything
     extra_root_fingerprint = $extraRootFingerprint
     catalog_fingerprint = Get-TextFingerprint (($catalog | ForEach-Object { '{0}={1}' -f $_.id, (($_.names) -join ',') }) -join ';')
+}
+$everythingUsed = $false
+$everythingExe = ''
+
+function Get-EverythingExe {
+    # Everything's CLI (es.exe) answers a filename query from its prebuilt index in milliseconds. Prefer
+    # PATH, then the usual install spots. Optional by design: no es.exe means we fall back to the walk.
+    $onPath = Get-CommandPath -Name 'es.exe'
+    if (-not [string]::IsNullOrWhiteSpace($onPath)) { return $onPath }
+    foreach ($candidate in @(
+            (Join-Path ([string]$env:ProgramFiles) 'Everything\es.exe'),
+            (Join-Path ([string]${env:ProgramFiles(x86)}) 'Everything\es.exe'),
+            (Join-Path ([string]$env:LOCALAPPDATA) 'Programs\Everything\es.exe'))) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate -PathType Leaf)) { return $candidate }
+    }
+    return ''
+}
+
+function Get-EverythingMatches {
+    # Ask es.exe for each candidate filename and return a leaf -> full-path map (first hit per leaf),
+    # restricted to files that still exist on a fixed local drive with an EXACT filename match. es.exe
+    # indexes the disk, so a hit is a disk-discovered tool exactly like the fallback stack walk -- callers
+    # record it as source=fallback-search so the downstream signature gate treats it identically. Any
+    # es.exe / service failure yields an empty map so discovery degrades to the directory walk.
+    param([Parameter(Mandatory = $true)][string]$EverythingExe, [string[]]$FileNames)
+
+    $map = @{}
+    $fixedRoots = @(Get-FixedDriveRoot)
+    if ($fixedRoots.Count -eq 0) { return $map }
+    foreach ($name in @($FileNames | Select-Object -Unique)) {
+        if ([string]::IsNullOrWhiteSpace($name) -or $map.ContainsKey($name)) { continue }
+        $hits = @()
+        try { $hits = @(& $EverythingExe -n 200 $name 2>$null | ForEach-Object { [string]$_ }) } catch { $hits = @() }
+        foreach ($hit in $hits) {
+            $trimmed = ([string]$hit).Trim()
+            if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+            if ([IO.Path]::GetFileName($trimmed) -ne $name) { continue }
+            if (-not (Test-Path -LiteralPath $trimmed -PathType Leaf)) { continue }
+            $onFixed = $false
+            foreach ($fixed in $fixedRoots) { if ($trimmed.StartsWith($fixed, [StringComparison]::OrdinalIgnoreCase)) { $onFixed = $true; break } }
+            if (-not $onFixed) { continue }
+            $map[$name] = $trimmed
+            break
+        }
+    }
+    return $map
 }
 
 function Test-DiscoveryInputsMatch {
@@ -589,6 +643,23 @@ if (-not $reuseApplied) {
         }
     }
 
+    # RV Everything: after the scoped walk, fill any still-missing tool by name from the Everything index.
+    # This gives -DeepScan-class disk coverage instantly, without the multi-minute whole-drive walk. Skipped
+    # under -SearchRootsOnly (scope-limited on purpose). Hits become source=fallback-search below, so the
+    # detect-protections signature gate treats an index-found tool exactly like a walk-found one.
+    if ($UseEverything -and -not $SearchRootsOnly) {
+        $everythingExe = Get-EverythingExe
+        if (-not [string]::IsNullOrWhiteSpace($everythingExe)) {
+            $missingNames = @(@($candidateFileNames) | Where-Object { -not $fallbackPaths.ContainsKey($_) })
+            if ($missingNames.Count -gt 0) {
+                foreach ($pair in (Get-EverythingMatches -EverythingExe $everythingExe -FileNames $missingNames).GetEnumerator()) {
+                    if (-not $fallbackPaths.ContainsKey($pair.Key)) { $fallbackPaths[$pair.Key] = $pair.Value }
+                }
+            }
+            $everythingUsed = $true
+        }
+    }
+
     $rows = foreach ($entry in $catalog) {
         $path = ''
         $source = 'not-found'
@@ -732,5 +803,6 @@ Write-InventoryFile -Path $jsonPath -Content (([pscustomobject]@{
 "languages=$($languagesAvailable -join ',')"
 "deepscan=$(if ($DeepScan) { 'yes' } else { 'no' })"
 "searchrootsonly=$(if ($SearchRootsOnly) { 'yes' } else { 'no' })"
+"everything=$(if (-not $UseEverything) { 'off' } elseif ($SearchRootsOnly) { 'skipped-searchrootsonly' } elseif ($reuseApplied) { 'reused' } elseif ($everythingUsed) { 'used' } else { 'unavailable' })"
 "extrarootfiles=$($resolvedExtraRootFiles.Count)"
 if (-not $reuseApplied -and $ReuseInventory) { "reuserejected=$reuseRejectReason" }

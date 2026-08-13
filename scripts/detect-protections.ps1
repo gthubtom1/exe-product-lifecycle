@@ -29,9 +29,15 @@ param(
 
     [switch]$Force,
 
-    # RV-R4 M1: refuse to execute a discovered analysis tool whose Authenticode signature is not Valid.
-    # Off by default because legitimate tools (some diec builds) are unsigned; on, it hardens the box.
-    [switch]$RequireSignedTools
+    # RV-R4 M1: refuse to execute ANY discovered analysis tool (even PATH-installed) whose Authenticode
+    # signature is not Valid. Stricter than the default F1 gate below; hardens the box end to end.
+    [switch]$RequireSignedTools,
+
+    # RV F1: by DEFAULT, a tool located by scanning the disk (source=fallback-search) that is NOT validly
+    # signed is refused execution -- planting an unsigned diec.exe/strings.exe in a scanned directory is
+    # the demonstrated risk. This switch is the explicit "I trust this unsigned, disk-discovered tool"
+    # override. Tools resolved from PATH / the registry (deliberately installed) still run either way.
+    [switch]$AllowUnsignedDiscoveredTools
 )
 
 Set-StrictMode -Version Latest
@@ -54,7 +60,9 @@ function Approve-DiscoveredTool {
     param(
         [AllowEmptyString()][string]$ToolPath,
         [Parameter(Mandatory = $true)][string]$Purpose,
+        [AllowEmptyString()][string]$Source,
         [bool]$RequireSigned,
+        [bool]$AllowUnsignedDiscovered,
         [Parameter(Mandatory = $true)]$Notes
     )
 
@@ -62,9 +70,16 @@ function Approve-DiscoveredTool {
     $toolHash = (Get-FileHash -LiteralPath $ToolPath -Algorithm SHA256).Hash
     $sigStatus = 'unknown'
     try { $sigStatus = [string](Get-AuthenticodeSignature -LiteralPath $ToolPath).Status } catch { $sigStatus = 'unknown' }
-    [void]$Notes.Add("将执行分析工具 ${Purpose}: $ToolPath（签名状态 $sigStatus, sha256 $toolHash）")
+    $sourceLabel = if ([string]::IsNullOrWhiteSpace($Source)) { 'unknown' } else { $Source }
+    [void]$Notes.Add("将执行分析工具 ${Purpose}: $ToolPath（来源 $sourceLabel, 签名状态 $sigStatus, sha256 $toolHash）")
     if ($RequireSigned -and $sigStatus -ne 'Valid') {
         [void]$Notes.Add("已按 -RequireSignedTools 跳过未通过签名校验的工具（签名状态 $sigStatus）: $ToolPath")
+        return ''
+    }
+    # RV F1: a disk-scanned (fallback-search) tool that is not validly signed is the planted-binary risk;
+    # refuse it by default. PATH/registry-sourced tools are deliberately installed and still run.
+    if ($sourceLabel -eq 'fallback-search' -and $sigStatus -ne 'Valid' -and -not $AllowUnsignedDiscovered) {
+        [void]$Notes.Add("已默认跳过磁盘扫描发现、且未通过签名校验的工具（来源 fallback-search, 签名状态 $sigStatus）: $ToolPath。确认可信可加 -AllowUnsignedDiscoveredTools 显式放行；或把工具装到 PATH。")
         return ''
     }
     return $ToolPath
@@ -105,38 +120,47 @@ if ([string]::IsNullOrWhiteSpace($TargetPath) -or -not (Test-Path -LiteralPath $
 $target = Resolve-CanonicalPath -Path (Resolve-Path -LiteralPath $TargetPath).Path
 
 # --- find DIE from the tool inventory -------------------------------------------------------
-function Get-InventoryToolPath {
+function Get-InventoryTool {
     param([string[]]$PreferLeaf)
 
+    $empty = [pscustomobject]@{ Path = ''; Source = '' }
     $jsonPath = Join-Path $stateRoot 'tooling\TOOL-INVENTORY.json'
-    if (-not (Test-Path -LiteralPath $jsonPath -PathType Leaf)) { return '' }
-    try { $inv = Read-TextFileSafe -Path $jsonPath | ConvertFrom-Json } catch { return '' }
+    if (-not (Test-Path -LiteralPath $jsonPath -PathType Leaf)) { return $empty }
+    try { $inv = Read-TextFileSafe -Path $jsonPath | ConvertFrom-Json } catch { return $empty }
     foreach ($row in @($inv.tools)) {
         $rowPath = [string](Get-PropertyValue $row 'path' '')
         if ([string]::IsNullOrWhiteSpace($rowPath)) { continue }
         $leaf = [IO.Path]::GetFileName($rowPath)
-        if ($PreferLeaf -contains $leaf -and (Test-Path -LiteralPath $rowPath -PathType Leaf)) { return $rowPath }
+        if ($PreferLeaf -contains $leaf -and (Test-Path -LiteralPath $rowPath -PathType Leaf)) {
+            return [pscustomobject]@{ Path = $rowPath; Source = [string](Get-PropertyValue $row 'source' '') }
+        }
     }
-    return ''
+    return $empty
 }
 
 # diec.exe is the command-line build; die.exe is the GUI and would hang. Prefer the console one and
 # derive it from the discovered die.exe if only that was recorded.
-$diePath = Get-InventoryToolPath -PreferLeaf @('diec.exe')
+$dieTool = Get-InventoryTool -PreferLeaf @('diec.exe')
+$diePath = $dieTool.Path
+$dieSource = $dieTool.Source
 if ([string]::IsNullOrWhiteSpace($diePath)) {
-    $dieGui = Get-InventoryToolPath -PreferLeaf @('die.exe', 'Detect-It-Easy.exe')
-    if (-not [string]::IsNullOrWhiteSpace($dieGui)) {
-        $sibling = Join-Path (Split-Path -Parent $dieGui) 'diec.exe'
-        if (Test-Path -LiteralPath $sibling -PathType Leaf) { $diePath = $sibling }
+    $dieGuiTool = Get-InventoryTool -PreferLeaf @('die.exe', 'Detect-It-Easy.exe')
+    if (-not [string]::IsNullOrWhiteSpace($dieGuiTool.Path)) {
+        $sibling = Join-Path (Split-Path -Parent $dieGuiTool.Path) 'diec.exe'
+        # A sibling derived from a disk path is treated as disk-discovered for the F1 signature gate.
+        if (Test-Path -LiteralPath $sibling -PathType Leaf) { $diePath = $sibling; $dieSource = 'fallback-search' }
     }
 }
-$stringsPath = Get-InventoryToolPath -PreferLeaf @('strings.exe', 'strings64.exe')
+$stringsTool = Get-InventoryTool -PreferLeaf @('strings.exe', 'strings64.exe')
+$stringsPath = $stringsTool.Path
+$stringsSource = $stringsTool.Source
 
 $notes = New-Object System.Collections.Generic.List[string]
 
-# RV-R4 M1: verify + record each discovered tool before it is executed below.
-$diePath = Approve-DiscoveredTool -ToolPath $diePath -Purpose 'DIE(加壳/编译器识别)' -RequireSigned:$RequireSignedTools -Notes $notes
-$stringsPath = Approve-DiscoveredTool -ToolPath $stringsPath -Purpose 'strings(字符串扫描)' -RequireSigned:$RequireSignedTools -Notes $notes
+# RV-R4 M1 + F1: verify + record each discovered tool before it is executed below; refuse unsigned
+# disk-discovered tools by default (see Approve-DiscoveredTool).
+$diePath = Approve-DiscoveredTool -ToolPath $diePath -Purpose 'DIE(加壳/编译器识别)' -Source $dieSource -RequireSigned:$RequireSignedTools -AllowUnsignedDiscovered:$AllowUnsignedDiscoveredTools -Notes $notes
+$stringsPath = Approve-DiscoveredTool -ToolPath $stringsPath -Purpose 'strings(字符串扫描)' -Source $stringsSource -RequireSigned:$RequireSignedTools -AllowUnsignedDiscovered:$AllowUnsignedDiscoveredTools -Notes $notes
 
 # --- packer / compiler via DIE --------------------------------------------------------------
 $packer = 'unknown'

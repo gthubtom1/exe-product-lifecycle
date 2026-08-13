@@ -124,8 +124,21 @@ try {
                 if ($seenIds.ContainsKey($recordId)) { [void]$errors.Add("duplicate experience_id: $recordId") }
                 else { $seenIds[$recordId] = $file.FullName }
                 $text = Get-ExperiencePublicText -Record $record
-                $privacyFindings = @(Get-PublicContentFindings -Text $text)
-                if ($text -match '(?i)UNVERIFIED|__PRODUCT_|__BASELINE_|__CORE_') { $privacyFindings += 'placeholder_or_unverified' }
+                # The privacy gate must cover the WHOLE published record, not just the human projection:
+                # publish-knowledge pushes the entire JSON, so sensitive data hidden in created_at/updated_at/
+                # sanitization.* (or any other field) would otherwise leak to the public repo. Scan the full
+                # canonical record too, masking only the record's own payload_sha256 self-hashes (validated
+                # separately) so they do not trip the artifact_hash finding. (RV evolution HIGH leak.)
+                $fullRecordText = ConvertTo-CanonicalJson -Value $record
+                # Mask the VALUES of every structural integrity-hash field (payload_sha256, candidate_sha256,
+                # sanitization.payload_sha256, any *_sha256): those are self-referential hashes the skill
+                # computes and validates separately, not artifact hashes leaked from a target, so they must
+                # not trip the artifact_hash finding. A hash actually leaked from a sample sits in free text
+                # (title/summary/created_at/findings/notes), which is NOT a "...sha256": "<hex>" field and so
+                # is still scanned and still caught below. (RV evolution HIGH leak; fixes an over-broad mask.)
+                $fullRecordText = [regex]::Replace($fullRecordText, '("[A-Za-z0-9_]*sha256"\s*:\s*")[A-Fa-f0-9]{64}(")', '${1}SHA256_FIELD_OK${2}')
+                $privacyFindings = @(Get-PublicContentFindings -Text $text) + @(Get-PublicContentFindings -Text $fullRecordText)
+                if (($text + "`n" + $fullRecordText) -match '(?i)UNVERIFIED|__PRODUCT_|__BASELINE_|__CORE_') { $privacyFindings += 'placeholder_or_unverified' }
                 foreach ($finding in @($privacyFindings | Select-Object -Unique)) { [void]$errors.Add("$($file.Name): public knowledge privacy finding: $finding") }
                 $relative = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
                 [void]$actualEntries.Add([pscustomobject]@{

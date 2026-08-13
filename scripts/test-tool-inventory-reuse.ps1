@@ -273,6 +273,20 @@ $reportedDrives = @((Get-Key $cold 'searchdrives') -split ',' | Where-Object { -
 $withinFixed = if ($reportedDrives -ge 1 -and $reportedDrives -le $driveCount) { 'yes' } else { 'no' }
 Add-Result -Id 'R15-searched-drives-within-fixed' -Expected 'yes' -Actual $withinFixed
 
+# EV -- Everything (es.exe) integration. Opt-in and graceful: it must not crash whether or not es.exe is
+# installed, and the run must report which path it took -- never silently 'off' when the flag was passed.
+# Without the flag the feature is off; with it under -SearchRootsOnly it is skipped (scope-limited mode);
+# with it in a full sweep it is either 'used' (es.exe available) or 'unavailable' (not installed).
+$evProduct = New-Product -Name 'ev'
+$evOff = Invoke-Discover -Root $evProduct -ExtraArgs @('-SearchRootsOnly', '-AdditionalSearchRoot', $narrowRoot)
+Add-Result -Id 'EV1-off-without-flag' -Expected 'off' -Actual (Get-Key $evOff 'everything')
+$evScoped = Invoke-Discover -Root $evProduct -ExtraArgs @('-UseEverything', '-SearchRootsOnly', '-AdditionalSearchRoot', $narrowRoot)
+Add-Result -Id 'EV2-skipped-under-searchrootsonly' -Expected 'skipped-searchrootsonly' -Actual (Get-Key $evScoped 'everything')
+Add-Result -Id 'EV2-no-crash' -Expected 'no' -Actual $(if ($evScoped.Crashed) { 'yes' } else { 'no' })
+$evFull = Invoke-Discover -Root $evProduct -ExtraArgs @('-UseEverything')
+Add-Result -Id 'EV3-full-uses-or-unavailable' -Expected 'yes' -Actual $(if ((Get-Key $evFull 'everything') -in @('used', 'unavailable')) { 'yes' } else { 'no' })
+Add-Result -Id 'EV3-no-crash' -Expected 'no' -Actual $(if ($evFull.Crashed) { 'yes' } else { 'no' })
+
 ''
 $failed = @($script:Results | Where-Object { $_.Status -eq 'FAIL' })
 "RESULT: $(@($script:Results | Where-Object { $_.Status -eq 'PASS' }).Count) passed, $($failed.Count) failed"

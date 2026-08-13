@@ -22,7 +22,7 @@ else {
     else {
         $frontmatterBody = $frontmatter.Groups[1].Value
         if ($frontmatterBody -notmatch '(?m)^name:\s*exe-product-lifecycle\s*$') { [void]$errors.Add('SKILL.md frontmatter name must equal the skill directory name (exe-product-lifecycle)') }
-        if ($frontmatterBody -notmatch '(?m)^description:\s*\S') { [void]$errors.Add('SKILL.md frontmatter description is empty (it is the portable trigger every agent reads)') }
+        if ($frontmatterBody -notmatch '(?m)^description:[ \t]*\S') { [void]$errors.Add('SKILL.md frontmatter description is empty (it is the portable trigger every agent reads)') }
     }
     if ((Get-Content -Encoding UTF8 -LiteralPath $skillPath).Count -gt 500) { [void]$errors.Add('SKILL.md exceeds 500 lines') }
 }

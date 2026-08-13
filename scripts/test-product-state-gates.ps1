@@ -533,6 +533,28 @@ Set-Status -Root $root -Status 'ANALYZED'
 Set-CuFindings -Root $root -Unpacking 'not_applicable'
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'CU3-clean-na-not-flagged' -Text $run.Text -Pattern '脱壳必须是显式动作' -Absent
+# CU4 -- P-1 fail-safe: a DIE-blind profile (verdict UNKNOWN / packer unknown / entropy UNVERIFIED) must NOT
+# read as not-packed. A possibly-packed target left at unpacking:not_applicable must still be caught, so
+# "no DIE" cannot silently dodge the unpacking decision. Revert the fail-safe in Test-ProtectionSaysPacked
+# (product-state-common.ps1) and this goes red.
+$cuBlind = @'
+schema_version: 1
+product_id: "suite-product"
+status: "ASSESSED"
+packing:
+  detector: "entropy-only"
+  packer: "unknown"
+  entropy_total: "UNVERIFIED"
+modifiability:
+  verdict: "UNKNOWN"
+  reason: "no DIE available"
+'@
+$root = New-Fixture -Name 'cu-unpack-blind-na'
+Set-Status -Root $root -Status 'ANALYZED'
+[IO.File]::WriteAllText((Join-Path $root 'product-state\PROTECTION-PROFILE.yaml'), $cuBlind, (New-Object Text.UTF8Encoding($false)))
+Set-CuFindings -Root $root -Unpacking 'not_applicable'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'CU4-blind-detector-na-caught' -Text $run.Text -Pattern '脱壳必须是显式动作'
 
 # TR/AT -- opening (a): a static gate cannot prove a hash-consistent bound artifact was really produced by
 # exercising the product (a determined forger authors a matching fake). Two honest responses. TR: a real
@@ -769,6 +791,12 @@ Assert-Match -Name 'LP2-openai-yaml-not-required' -Text $run.Text -Pattern 'open
 [IO.File]::WriteAllText((Join-Path $lpRoot 'SKILL.md'), "---`nname: exe-product-lifecycle`ndescription:`n---`n`n# x`n", (New-Object Text.UTF8Encoding($false)))
 $run = Invoke-Script -Name 'validate-skill-layout.ps1' -ScriptArgs @('-SkillRoot', $lpRoot)
 Assert-Match -Name 'LP3-empty-description-caught' -Text $run.Text -Pattern 'description is empty'
+# LP4 -- F5b: an empty description FOLLOWED BY another frontmatter field must also be caught. The old
+# '^description:\s*\S' let \s* cross the newline and match the next field's first char (thinking it was
+# non-empty). Revert to \s* and this goes red.
+[IO.File]::WriteAllText((Join-Path $lpRoot 'SKILL.md'), "---`nname: exe-product-lifecycle`ndescription:`ncompatibility: `"Windows`"`n---`n`n# x`n", (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-skill-layout.ps1' -ScriptArgs @('-SkillRoot', $lpRoot)
+Assert-Match -Name 'LP4-empty-description-followed-by-field-caught' -Text $run.Text -Pattern 'description is empty'
 
 # S1..S4 -- the mandatory entry point. It is the mechanism that keeps an agent on the rails, so it
 # needs the same coverage as the gates it dispatches to: pick the right mode, put input
@@ -875,6 +903,30 @@ Assert-Match -Name 'BS2-claim-A-on-C-evidence-caught' -Text $run.Text -Pattern '
 Set-ContractField -Path $contract -Key 'claimed_tier' -Value 'C'
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'BS3-honest-C-clears-gate' -Text $run.Text -Pattern 'binding_strength_backed' -Absent
+
+# BS4 -- F-AH-1/3 ceiling: a claimed tier above the protection_ceiling must be caught even when that tier's
+# own evidence fields are filled (the demonstrated over-claim was "ceiling C but claimed A"). Fill A-evidence
+# so the gate cannot fail on evidence, set protection_ceiling C, claim A -> only the ceiling can fire it.
+# Revert the ceiling check in Test-BindingStrengthEvidence and this goes red.
+Set-ContractField -Path $contract -Key 'protection_ceiling' -Value 'C'
+Set-ContractField -Path $contract -Key 'evidence_a_server_issued_material' -Value 'server issues the runtime key; launcher injects it into the core'
+Set-ContractField -Path $contract -Key 'evidence_a_core_fails_without_material' -Value 'withholding the key makes the core exit immediately'
+Set-ContractField -Path $contract -Key 'verified_tier' -Value 'A'
+Set-ContractField -Path $contract -Key 'claimed_tier' -Value 'A'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BS4-tier-above-ceiling-caught' -Text $run.Text -Pattern 'binding_strength_backed'
+
+# BS5 -- F-AH-2 consistency: the machine-read binding_summary in AUTH-ADAPTER-REQUEST.md must match the sole
+# grading source. Set the contract to honest C (binding gate clears) but the summary claimed_tier to A ->
+# the mismatch must be caught. Revert the consistency gate in validate-product-state.ps1 and this goes red.
+Set-ContractField -Path $contract -Key 'claimed_tier' -Value 'C'
+Set-ContractField -Path $contract -Key 'verified_tier' -Value 'C'
+$adapterReq = Join-Path $root 'product-state\auth\AUTH-ADAPTER-REQUEST.md'
+$adapterReqText = Get-Content -Raw -Encoding UTF8 -LiteralPath $adapterReq
+$adapterReqText = $adapterReqText -replace '(?m)^(\s*claimed_tier:\s*")[^"]*(")', '${1}A${2}'
+[IO.File]::WriteAllText($adapterReq, $adapterReqText, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BS5-summary-mismatch-caught' -Text $run.Text -Pattern 'binding_summary'
 
 # SN -- Windows gives one directory two names: C:\Users\RUNNER~1\x and C:\Users\runneradmin\x.
 # Every containment check in the validator is a string prefix test, so a product reached through

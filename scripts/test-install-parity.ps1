@@ -70,7 +70,7 @@ try {
     }
     else {
         $installed = (Resolve-Path -LiteralPath $InstalledRoot).Path.TrimEnd('\')
-        $installedIsClone = Test-Path -LiteralPath (Join-Path $installed '.git') -PathType Container
+        $installedIsClone = Test-Path -LiteralPath (Join-Path $installed '.git')  # RV sync F3: .git may be a file (worktree/submodule), not only a directory
         $drift = New-Object System.Collections.Generic.List[string]
         foreach ($file in $sourceFiles) {
             $relative = $file.FullName.Substring($source.Length + 1)
@@ -116,6 +116,10 @@ try {
     $stale = Join-Path $preserveTemp 'scripts\removed-upstream.ps1'
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stale) | Out-Null
     [IO.File]::WriteAllText($stale, '# a script the source no longer has')
+    # A real install copy always has a top-level SKILL.md; without it the sync guard (rightly) refuses a
+    # non-skill directory, so this fixture must seed one or the PRESERVE check never exercises sync at all
+    # and then mis-reports "kept a stale script" on a clean run. (RV install-parity F4a.)
+    [IO.File]::WriteAllText((Join-Path $preserveTemp 'SKILL.md'), "---`nname: exe-product-lifecycle`ndescription: install-parity preserve fixture`n---`n")
 
     & (Join-Path $source 'scripts\sync-local-skill.ps1') -SourceRoot $source -DestinationRoot $preserveTemp | Out-Null
 
@@ -136,12 +140,51 @@ try {
     $refusalText = (@($refusal | ForEach-Object { [string]$_ }) -join "`n")
     if ($refusalText -notmatch 'git pull') { [void]$failures.Add('sync did not refuse a cloned destination, or did not say to use git pull') }
     if ((Get-Content -Raw -Encoding UTF8 -LiteralPath $marker) -ne 'untouched') { [void]$failures.Add('sync overwrote a cloned destination after refusing') }
+
+    # RV sync F1: a destination whose SKILL.md belongs to a DIFFERENT skill must be refused, not cleared.
+    # Revert the frontmatter-name check in sync-local-skill.ps1 and the bystander file below is deleted.
+    $f1Dest = Join-Path $preserveTemp 'f1-other-skill'
+    New-Item -ItemType Directory -Force -Path $f1Dest | Out-Null
+    [IO.File]::WriteAllText((Join-Path $f1Dest 'SKILL.md'), "---`nname: some-other-skill`ndescription: not this skill`n---`n")
+    $f1Bystander = Join-Path $f1Dest 'IMPORTANT.txt'
+    [IO.File]::WriteAllText($f1Bystander, 'keep me')
+    $f1Text = (@((& (Join-Path $source 'scripts\sync-local-skill.ps1') -SourceRoot $source -DestinationRoot $f1Dest 2>&1) | ForEach-Object { [string]$_ }) -join "`n")
+    if ($f1Text -notmatch '另一个技能') { [void]$failures.Add('sync did not refuse a destination that is a different skill (F1)') }
+    if (-not (Test-Path -LiteralPath $f1Bystander -PathType Leaf)) { [void]$failures.Add('sync deleted an unrelated file in a different-skill destination (F1)') }
+
+    # RV sync F2: local knowledge ANYWHERE under knowledge/ must survive sync, not only single-level json.
+    # Revert the broadened preserve match and the root/deep/non-json files below are silently deleted.
+    $f2Dest = Join-Path $preserveTemp 'f2-knowledge-shapes'
+    New-Item -ItemType Directory -Force -Path (Join-Path $f2Dest 'knowledge\verified\deep') | Out-Null
+    [IO.File]::WriteAllText((Join-Path $f2Dest 'SKILL.md'), "---`nname: exe-product-lifecycle`ndescription: f2 fixture`n---`n")
+    $f2Root = Join-Path $f2Dest 'knowledge\local-root.json'
+    $f2Deep = Join-Path $f2Dest 'knowledge\verified\deep\nested.json'
+    $f2Txt = Join-Path $f2Dest 'knowledge\verified\notes.txt'
+    [IO.File]::WriteAllText($f2Root, '{"note":"root"}')
+    [IO.File]::WriteAllText($f2Deep, '{"note":"deep"}')
+    [IO.File]::WriteAllText($f2Txt, 'freeform note')
+    & (Join-Path $source 'scripts\sync-local-skill.ps1') -SourceRoot $source -DestinationRoot $f2Dest | Out-Null
+    if (-not (Test-Path -LiteralPath $f2Root -PathType Leaf)) { [void]$failures.Add('sync deleted a knowledge file at the knowledge/ root (F2)') }
+    if (-not (Test-Path -LiteralPath $f2Deep -PathType Leaf)) { [void]$failures.Add('sync deleted a knowledge file in a deeper subdir (F2)') }
+    if (-not (Test-Path -LiteralPath $f2Txt -PathType Leaf)) { [void]$failures.Add('sync deleted a non-json knowledge note (F2)') }
+
+    # RV sync F3: a worktree/submodule checkout has .git as a FILE; sync must still refuse it as a clone.
+    # Restore -PathType Container and the valid-frontmatter SKILL.md body below gets overwritten.
+    $f3Dest = Join-Path $preserveTemp 'f3-git-as-file'
+    New-Item -ItemType Directory -Force -Path $f3Dest | Out-Null
+    [IO.File]::WriteAllText((Join-Path $f3Dest '.git'), 'gitdir: ../.git/worktrees/x')
+    $f3Marker = Join-Path $f3Dest 'SKILL.md'
+    [IO.File]::WriteAllText($f3Marker, "---`nname: exe-product-lifecycle`ndescription: worktree checkout`n---`nUNTOUCHED-BODY`n")
+    $f3Text = (@((& (Join-Path $source 'scripts\sync-local-skill.ps1') -SourceRoot $source -DestinationRoot $f3Dest 2>&1) | ForEach-Object { [string]$_ }) -join "`n")
+    if ($f3Text -notmatch 'git pull') { [void]$failures.Add('sync did not refuse a worktree/submodule (.git as file) destination (F3)') }
+    if ((Get-Content -Raw -Encoding UTF8 -LiteralPath $f3Marker) -notmatch 'UNTOUCHED-BODY') { [void]$failures.Add('sync overwrote a worktree/submodule destination (F3)') }
+
     if ($failures.Count -gt 0) {
         foreach ($item in $failures) { Write-Output "PRESERVE: $item" }
         Write-Output "RESULT: failed ($($failures.Count) sync preservation failure(s))"
         exit 1
     }
-    Write-Output 'PRESERVE: ok (learned experience survives sync, stale files still removed, cloned destination refused)'
+    Write-Output 'PRESERVE: ok (learned survives; stale removed; clone/worktree refused; other-skill dir refused; all knowledge shapes preserved)'
 }
 finally {
     if ((Test-Path -LiteralPath $preserveTemp -PathType Container) -and $preserveTemp.StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $preserveTemp -Recurse -Force }
