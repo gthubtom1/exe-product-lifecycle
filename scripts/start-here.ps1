@@ -33,22 +33,43 @@ $ErrorActionPreference = 'Stop'
 
 if ($PSBoundParameters.ContainsKey('TaskId')) {
     $gateDir = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".route-gate"
-    if (-not (Test-Path -LiteralPath (Join-Path $gateDir "DISABLED"))) {
-        $activePath = Join-Path $gateDir "active.json"
-        if (-not (Test-Path -LiteralPath $activePath -PathType Leaf)) {
+    if (Test-Path -LiteralPath (Join-Path $gateDir "DISABLED")) {
+        Write-Output '逃生模式开着（门禁已关），这次放行。要恢复：删除 ~/.route-gate/DISABLED 或双击桌面恢复。'
+    }
+    else {
+        $decisionPath = Join-Path $gateDir ($TaskId + '\decision.json')
+        if (-not (Test-Path -LiteralPath $decisionPath -PathType Leaf)) {
             Write-Output '这个活还没走分派，我先不直接开工。先运行 route.ps1 领个号（约 1 秒），领完我马上接着干。'
             exit 1
         }
         try {
-            $routeDecision = [System.IO.File]::ReadAllText($activePath) | ConvertFrom-Json
+            $routeDecision = [System.IO.File]::ReadAllText($decisionPath) | ConvertFrom-Json
         }
         catch {
             Write-Output '分派标记读不出来，我先不直接开工。先运行 route.ps1 领个号（约 1 秒），领完我马上接着干。'
             exit 1
         }
+        if ([string]$routeDecision.decision -eq 'ask') {
+            Write-Output '这个任务的方向还没选定，先把路由那句 1/2/3 回掉。'
+            exit 1
+        }
         if ([string]$routeDecision.task_id -ne $TaskId -or [string]$routeDecision.decision -ne 'exe-product-lifecycle') {
             Write-Output '这个任务的分派结果不是走我这条流程。先运行 route.ps1 确认分派，它会告诉你走哪条流程。'
             exit 1
+        }
+        $routeVersion = [string]$routeDecision.route_version
+        if (-not [string]::IsNullOrWhiteSpace($routeVersion) -and $routeVersion -ne '1.0') {
+            Write-Output '分派标记的版本和当前路由版本对不上，我先停一下。重新运行 route.ps1（约 1 秒）更新标记，我马上接着干。'
+            exit 1
+        }
+        $routeStamp = $null
+        try { $routeStamp = [DateTime]$routeDecision.created_at } catch { }
+        if ($null -ne $routeStamp) {
+            $alreadyStarted = (Test-Path -LiteralPath (Join-Path $ProductRoot 'product-state\STATE.yaml') -PathType Leaf)
+            if (-not $alreadyStarted -and (Get-Date).ToUniversalTime() - $routeStamp -gt [TimeSpan]::FromHours(12)) {
+                Write-Output '分派标记已经过期了，我先停一下。重新运行 route.ps1（约 1 秒）更新标记，我马上接着干。'
+                exit 1
+            }
         }
     }
 }
@@ -60,7 +81,7 @@ if ($PSBoundParameters.ContainsKey('TaskId')) {
 # wrong OS is told plainly instead of chasing a cryptic error. ($IsWindows exists only on PS6+; on 5.1
 # the host is Windows by definition, and -and short-circuits so the variable is never referenced there.)
 if (($PSVersionTable.PSVersion.Major -ge 6) -and -not $IsWindows) {
-    Write-Output '错误: 这个 Skill 只能在 Windows 上运行（PowerShell 5.1 或 7）。它分析 Windows EXE，依赖注册表、System32 和 Windows 专用分析工具，在 macOS/Linux 上无法运行脚本。'
+    Write-Output '当前平台缺少本脚本的运行依赖（注册表 / System32 / Windows 分析工具）。请在 Windows（PowerShell 5.1 或 7）环境继续本流程。'
     exit 1
 }
 
