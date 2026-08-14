@@ -1211,7 +1211,19 @@ if ($stateTrack -ne 'source' -and (Test-Path -LiteralPath $analysisFindingsPath 
     Write-Output ("LAYER-COVERAGE: verdict={0} findings={1} payload={2} packer={3} container={4} unknown={5}" -f `
         $(if ([string]::IsNullOrWhiteSpace($routingVerdict)) { 'absent' } else { $routingVerdict }), `
         $layerTotal, $layerPayload, $layerPacker, $layerContainer, $layerUnknown)
-    if ($routingVerdict -in @('CONTAINER', 'WRAPPER_ONLY') -and $layerPayload -gt 0) {
+    # Body-not-visible = you cannot read the real product code yet. TWO cases: a CONTAINER (the real product
+    # is still inside the installer), or a WRAPPER_ONLY target whose code is GENUINELY PACKED -- a NAMED packer
+    # (UPX/Themida/VMProtect/ASPack/Enigma/...) encrypts or compresses the code. It is NOT keyed on re_enter:
+    # that is only 'yes' for UPX, so every other packer slipped through and payload findings on the shell were
+    # let past (RV layer review F1/F2 -- the hole an earlier re_enter-keyed version opened). And NOT on high
+    # entropy alone: a readable native binary with embedded compressed data (e.g. a Tauri app) reads entropy
+    # > 7 yet its code is fully disassemblable, so WRAPPER_ONLY + packer:none-detected stays allowed (the
+    # skinforge false-positive this gate must not red). WRAPPER_ONLY is only ever emitted for a packed target,
+    # so pairing it with a NAMED packer isolates "code hidden" from "high-entropy-but-readable".
+    $layerPacker = (Get-YamlIndentedScalar -Text $layerProfileText -Parent 'packing' -Key 'packer').Trim()
+    $layerNamedPacker = (-not [string]::IsNullOrWhiteSpace($layerPacker)) -and ($layerPacker.ToLowerInvariant() -notin @('none-detected', 'none', 'unknown', 'unverified'))
+    $layerBodyNotVisible = ($routingVerdict -eq 'CONTAINER') -or (($routingVerdict -eq 'WRAPPER_ONLY') -and $layerNamedPacker)
+    if ($layerBodyNotVisible -and $layerPayload -gt 0) {
         # The error names the way out on purpose. Without it the cheapest move for someone who
         # legitimately DID unpack is to relabel observed_layer to 'packer' and walk through -- which
         # is precisely the behaviour this gate exists to stop. A gate whose exit is documented
@@ -1278,6 +1290,29 @@ if ((Test-Path -LiteralPath $adapterReqPath -PathType Leaf) -and (Test-Path -Lit
                     $errors.Add("AUTH-ADAPTER-REQUEST.md 的 binding_summary.$bindingField 与 LAUNCH-CONTRACT.yaml 的 binding_strength.$bindingField 不一致（机读摘要必须与唯一判级真相源逐字一致、不得另报更高级别）")
                 }
             }
+        }
+    }
+}
+
+# binding-strength A/B is a claim of strong/medium launcher<->core coupling; like every other anti-fabrication
+# gate it must be BOUND to a real artifact, not typed prose. A claimed tier A or B in LAUNCH-CONTRACT.yaml must
+# carry binding_strength.evidence_path + evidence_sha256 pointing at a real, non-empty, in-product-state file
+# whose hash matches (e.g. a run showing the core fails without the launcher-injected material). C is exempt
+# (C = "core runs standalone", an honest wrapper-only ack). (RV auth F1: tier evidence was unbound free text,
+# so a shell recorded strong binding by typing junk into the evidence fields.)
+if (Test-Path -LiteralPath $launchContractPath -PathType Leaf) {
+    $lcBindText = Read-StateText -Path $launchContractPath
+    $lcClaimedTier = (Get-IndentedYamlScalar -Text $lcBindText -Key 'claimed_tier').Trim().ToUpperInvariant()
+    if ($lcClaimedTier -in @('A', 'B')) {
+        $bindEvPath = (Get-IndentedYamlScalar -Text $lcBindText -Key 'evidence_path').Trim()
+        $bindEvSha = (Get-IndentedYamlScalar -Text $lcBindText -Key 'evidence_sha256').Trim()
+        $bindBound = $false
+        if (-not [string]::IsNullOrWhiteSpace($bindEvPath) -and -not [string]::IsNullOrWhiteSpace($bindEvSha)) {
+            $bindResolved = Resolve-ProductRelativePath -Relative $bindEvPath
+            if ($bindResolved.Inside) { $bindBound = Test-BoundEvidenceFile -FullPath $bindResolved.FullPath -RecordedSha256 $bindEvSha }
+        }
+        if (-not $bindBound) {
+            $errors.Add("LAUNCH-CONTRACT.yaml 声称绑定强度 $lcClaimedTier（强/中绑定），但 binding_strength.evidence_path + evidence_sha256 没有绑定真实产物：A/B 级必须指向 product-state/ 下真实存在、非空且哈希一致的实测证据（抽掉注入材料后核心跑不起来/被拦的截图或录屏）——纯文本声称、空文件或哈希不符判失败；仅 C 级免绑")
         }
     }
 }
@@ -1410,6 +1445,13 @@ if (Test-Path -LiteralPath $stateRoot -PathType Container) {
     foreach ($file in @(Get-ChildItem -LiteralPath $stateRoot -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @('.md', '.yaml', '.yml', '.json', '.txt') })) {
         $relativeFile = $file.FullName.Substring($stateRoot.Length + 1)
         if ($placeholderChecked -contains $relativeFile) { continue }
+        # Evidence + preserved inputs live under artifacts/ (tool outputs like die-detection.txt, extracted
+        # payloads, captured strings). They legitimately contain __X__ tokens copied from the TARGET binary
+        # (compiler/framework constants such as __TAURI_TO_IPC_KEY__) -- those are NOT unfilled scaffold
+        # placeholders, and every scaffold template this sweep guards lives OUTSIDE artifacts/. Sweeping
+        # evidence false-positived a real NSIS/Tauri analysis. INPUT-MANIFEST placeholders are still caught
+        # by the input-manifest group. (RV real-target finding.)
+        if ($relativeFile -like 'artifacts\*') { continue }
         if ((Read-StateText -Path $file.FullName) -match '__[A-Z0-9_]+__') {
             $errors.Add("product state still contains unfilled scaffold placeholders: $relativeFile")
         }

@@ -151,6 +151,19 @@ Assert-Verdict -Name 'V16-inno-is-container-not-wrapper' -ExpectedVerdict 'CONTA
     Get-ModifiabilityVerdict -Packer 'Inno Setup' -AntiDebug 'no')
 Assert-Verdict -Name 'V17-nsis-is-container' -ExpectedVerdict 'CONTAINER' -Result (
     Get-ModifiabilityVerdict -Packer 'Nullsoft Scriptable Install System (NSIS)' -AntiDebug 'no')
+
+# V17b -- RV real-target fix: DIE reports installers on a DEDICATED "Installer:" line, not the
+# Protector/Packer line. detect-protections read only the Packer line, so a live NSIS 3.11 installer came
+# back packer=none-detected -> Get-ContainerKind 'none' -> WRAPPER_ONLY, and its payload was never routed
+# into. Get-DieContainerSignal must lift the Installer line into the container signal. Remove the
+# Installer: branch in Get-DieContainerSignal and V17b goes red.
+$dieNsisText = "PE32`n    Compiler: Microsoft Visual C/C++`n    Installer: Nullsoft Scriptable Install System(3.11)[lzma, solid]"
+$nsisSignal = Get-DieContainerSignal -DieText $dieNsisText -Packer 'none-detected'
+Assert-Equal -Name 'V17b-installer-line-lifted-to-signal' -Expected 'nsis' -Actual ([string](Get-ContainerKind -Packer $nsisSignal -TargetName 'C:\x\setup.exe'))
+# V17c -- and it must not manufacture a container from nothing: no Installer line + no packer -> empty
+# signal -> none (so the exemption cannot silently turn every target into a container).
+$noSignal = Get-DieContainerSignal -DieText "PE32`n    Compiler: Rust" -Packer 'none-detected'
+Assert-Equal -Name 'V17c-no-installer-no-false-container' -Expected 'none' -Actual ([string](Get-ContainerKind -Packer $noSignal -TargetName 'C:\x\app.exe'))
 Assert-Verdict -Name 'V18-msi-extension-is-container' -ExpectedVerdict 'CONTAINER' -Result (
     Get-ModifiabilityVerdict -TargetName 'C:\x\setup.msi' -Packer 'none-detected' -AntiDebug 'no')
 

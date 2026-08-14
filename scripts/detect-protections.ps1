@@ -184,6 +184,10 @@ if (-not [string]::IsNullOrWhiteSpace($diePath)) {
         else {
             $packer = 'none-detected'
         }
+        # DIE puts installers on a dedicated Installer: line (see Get-DieContainerSignal); surface it in
+        # notes as container evidence even though $packer stays clean.
+        $dieInstallerMatch = [regex]::Match($dieText, '(?im)^\s*Installer:\s*(.+)$')
+        if ($dieInstallerMatch.Success) { $notes.Add("DIE 报告安装器/容器: " + $dieInstallerMatch.Groups[1].Value.Trim()) }
     }
 }
 else {
@@ -298,10 +302,12 @@ if ($codeSigning -eq 'signed') {
 # real target -- an untested verdict is how a packed binary silently gets a "just patch it" plan.
 # The packed-status read stays here because it depends on DIE's raw entropy JSON.
 $statusSaysPacked = ($packedStatus -match '(?i)packed') -and ($packedStatus -notmatch '(?i)not\s*packed')
-# Q1 before everything else: installer names arrive on the same DIE Protector/Packer line as real
-# packers, so without this reclassification a setup package reads as WRAPPER_ONLY at best and as a
-# patchable product at worst -- the one misroute that ships successfully with nothing changed.
-$containerKind = Get-ContainerKind -Packer $packer -TargetName $target
+# Q1 before everything else: is the real product still inside a container. Installer names arrive on DIE's
+# dedicated "Installer:" line (and SFX packers on the Packer line); Get-DieContainerSignal combines both, so
+# a setup package is not misread as WRAPPER_ONLY -- the one misroute that ships successfully with nothing
+# changed. Reading only the Packer line is exactly how a live NSIS 3.11 installer was mislabelled once.
+$containerSignal = Get-DieContainerSignal -DieText $dieText -Packer $packer
+$containerKind = Get-ContainerKind -Packer $containerSignal -TargetName $target
 $verdictResult = Get-ModifiabilityVerdict -Packer $packer -EntropyTotal $entropyValue -StatusSaysPacked $statusSaysPacked -AntiDebug $antiDebug -SelfCheck $selfCheck -CodeSigning $codeSigning -FileFormat $fileFormat -LanguageFramework $languageFramework -ContainerKind $containerKind
 $verdict = $verdictResult.Verdict
 $reason = $verdictResult.Reason

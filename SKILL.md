@@ -242,6 +242,10 @@ A new Agent or a new conversation must start from `PRODUCT-INDEX.md` and `STATE.
 - **定制规则未逐条强校 anchor**：`CUSTOMIZATION-MANIFEST.yaml` 的 `rules` 只门禁"非空"，不硬性要求每条都带稳定 `anchor`。原因：一条找不到稳定锚点的规则是**合法的迁移冲突**（工作流要求把它标记为冲突并人工处理），硬要求 anchor 会对这些合法情况误报。做法：anchorless 规则按迁移冲突登记，不当作缺失。
 - **维护策略未强制与保护判定一致**：`MAINTENANCE-MODE.yaml` 的 `selected_strategy` 不硬性要求与 `PROTECTION-PROFILE.yaml` 的 `verdict` 一致。原因：`verdict` 判的是"能不能改动**分发出去的二进制**"，而不是"是否拥有源码"；维护方可能合法地对加壳/签名的分发件同时持有源码（`SOURCE_AVAILABLE`），硬门会误报。做法：`verdict` 驱动**默认**策略，偏离默认要在 `MAINTENANCE-MODE.yaml` 里写清理由。
 
+## 运行模式（默认：快速）
+
+面向常常只会发“继续”的零基础用户，默认按**快速**走：能自动推进就自动推进，用户说“继续”就一路往下，**只在两种情况停下来问用户**——(1) 撤不回的操作（正式发布/推送、覆盖或删除用户文件、不可逆数据变更）；(2) 发现疑似恶意代码（立刻如实告知，不要闷头继续）。其余（分析、定制、本地测试、写档案）不打断，做完给一句话进度。用户可随时改：“慢点／每步问我”=普通；“无人值守到某一步”=先说清目标步再自动推到那；“优先本机安全”=多做静态与权限检查。不要为了“显得严谨”而频繁打断一个只发“继续”的用户；也不要反过来在撤不回或危险处擅自越过。
+
 ## 阶段完成后的普通话菜单
 
 When a stage needs a user decision, show 3-6 plain-language options:
@@ -252,6 +256,8 @@ When a stage needs a user decision, show 3-6 plain-language options:
 4. 先处理发现的冲突
 5. 准备测试版发布包
 6. 暂停当前工作
+
+**每个选项后面用一句话标清“好处／适合什么情况”，并给出推荐项**——零基础用户常常只会发“继续”，不标好处等于没得选。
 
 When no decision is needed, continue to the next safe stage and report the result.
 

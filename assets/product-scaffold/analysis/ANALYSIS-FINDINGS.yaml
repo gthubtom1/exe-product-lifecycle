@@ -27,9 +27,11 @@ unpacking: "PENDING"              # 脱壳：加壳/高熵则记录脱壳或内�
 #   container = 在安装包/自解压外层看到的
 #   packer    = 在壳上看到的（未脱壳）
 #   payload   = 在真正的产品本体上看到的
-# 当 PROTECTION-PROFILE 的 modifiability.verdict 是 CONTAINER 或 WRAPPER_ONLY 时，本体还没被看到，
-# 此时 payload 层发现会被 validate-product-state.ps1 拒收。若你确实已经解开/脱壳，正确做法是对解出
-# 来的目标重新跑 detect-protections.ps1 重新路由（re_enter: yes 即表示应当如此），不是改标记蒙混。
+# 当本体还没露出来时，payload 层发现会被 validate-product-state.ps1 拒收——两种情况：modifiability.verdict
+# 是 CONTAINER（真产品还在安装包里），或者是 WRAPPER_ONLY 且 packing.packer 是一个具名加壳器（UPX/Themida/
+# VMProtect/... 把代码加密压缩了）。仅高熵而 packer=none-detected（可读原生二进制、只是内嵌了压缩数据）不算
+# 本体不可见，payload 发现照常合法。若确已解开/脱壳，正确做法是对解出来的目标重新跑 detect-protections.ps1
+# 重新路由，不是改标记蒙混。
 # 字段缺失按第三态 unknown 处理：既不判过也不判不过，但会出现在 LAYER-COVERAGE 总结行上。
 findings: []
 # findings 示例（真正做逆向时填，删掉本注释按需增删条目）：

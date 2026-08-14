@@ -487,6 +487,20 @@ function Set-RoutingVerdict {
     $t = [regex]::Replace($t, '(?m)^(\s+verdict:).*$', ('${1} "' + $Verdict + '"'))
     [IO.File]::WriteAllText($pp, $t, (New-Object Text.UTF8Encoding($false)))
 }
+function Set-RoutingReEnter {
+    param([string]$Root, [string]$ReEnter)
+    $pp = Join-Path $Root 'product-state\PROTECTION-PROFILE.yaml'
+    $t = Get-Content -Raw -Encoding UTF8 -LiteralPath $pp
+    $t = [regex]::Replace($t, '(?m)^(\s+re_enter:).*$', ('${1} "' + $ReEnter + '"'))
+    [IO.File]::WriteAllText($pp, $t, (New-Object Text.UTF8Encoding($false)))
+}
+function Set-RoutingPacker {
+    param([string]$Root, [string]$Packer)
+    $pp = Join-Path $Root 'product-state\PROTECTION-PROFILE.yaml'
+    $t = Get-Content -Raw -Encoding UTF8 -LiteralPath $pp
+    $t = [regex]::Replace($t, '(?m)^(\s+packer:).*$', ('${1} "' + $Packer + '"'))
+    [IO.File]::WriteAllText($pp, $t, (New-Object Text.UTF8Encoding($false)))
+}
 function Set-LayerFindings {
     param([string]$Root, [string]$Body)
     $p = Join-Path $Root 'product-state\analysis\ANALYSIS-FINDINGS.yaml'
@@ -530,11 +544,30 @@ Set-LayerFindings -Root $root -Body "findings:`n  - id: f1`n    technique: stati
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'LG5-payload-legal-once-routed-through' -Text $run.Text -Pattern 'observed_layer=payload 的发现' -Absent
 
-# LG6 -- the packed case is the same shape as the container case: on a shell you can produce four
-# categories of perfectly real findings that all describe the shell.
+# LG6 -- the PACKED case: a WRAPPER_ONLY target with a NAMED packer (code encrypted/compressed) still hides
+# the body, so payload findings on it are caught, same shape as a container. The gate keys off the named
+# packer, not re_enter (which is 'yes' only for UPX). Revert to a re_enter-only trigger and non-UPX packers escape.
 Set-RoutingVerdict -Root $root -Verdict 'WRAPPER_ONLY'
+Set-RoutingPacker -Root $root -Packer 'UPX(3.96)'
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
-Assert-Match -Name 'LG6-payload-finding-under-wrapper-caught' -Text $run.Text -Pattern 'observed_layer=payload 的发现'
+Assert-Match -Name 'LG6-payload-under-packed-wrapper-caught' -Text $run.Text -Pattern 'observed_layer=payload 的发现'
+
+# LG7 -- RV real-target: a re-routed NATIVE WRAPPER_ONLY that is only high-entropy (packer none-detected -- a
+# readable native binary with embedded compressed data, e.g. the extracted skinforge.exe) has a VISIBLE body,
+# so a payload finding on it must NOT red. Widen the gate to fire on any WRAPPER_ONLY (or any packed incl.
+# high-entropy) and LG7 reds -- the skinforge false-positive the packer-named signal exists to avoid.
+Set-RoutingPacker -Root $root -Packer 'none-detected'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'LG7-native-wrapper-payload-allowed' -Text $run.Text -Pattern 'observed_layer=payload 的发现' -Absent
+
+# LG8 -- RV layer review F1/F2 (the hole the earlier re_enter-keyed gate opened): a NAMED non-UPX packer
+# (Themida) is WRAPPER_ONLY + re_enter:no (only UPX is re-enterable), so a re_enter-keyed gate let its
+# shell-describing payload findings ESCAPE. The named-packer signal must red it regardless of re_enter.
+# Revert the gate to the re_enter axis and LG8 reds -- the adversarial shape the previous mutation set omitted.
+Set-RoutingPacker -Root $root -Packer 'Themida/WinLicense(3.x)'
+Set-RoutingReEnter -Root $root -ReEnter 'no'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'LG8-named-packer-payload-caught' -Text $run.Text -Pattern 'observed_layer=payload 的发现'
 
 # CU -- 脱壳是动作不是探测 (opening c). detect-protections only *detects* packing; nothing tied that detection
 # to the unpacking decision, so a packed target (WRAPPER_ONLY / high entropy / named packer) could still
@@ -986,6 +1019,60 @@ $adapterReqText = $adapterReqText -replace '(?m)^(\s*claimed_tier:\s*")[^"]*(")'
 [IO.File]::WriteAllText($adapterReq, $adapterReqText, (New-Object Text.UTF8Encoding($false)))
 $run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'BS5-summary-mismatch-caught' -Text $run.Text -Pattern 'binding_summary'
+
+# BS6 -- F1(b): tier A/B is a claim of strong/medium binding and, like every other anti-fabrication gate,
+# must be BOUND to a real artifact, not typed prose (RV auth F1: a shell recorded strong binding by typing
+# junk into the evidence fields). Claim A with all prose evidence filled + verdict CAN_PATCH (so neither the
+# ceiling nor F1a caps it) but NO bound evidence_path -> the new bound-evidence gate must fire; binding a real
+# file clears exactly it. Delete the binding-evidence gate in validate-product-state.ps1 and BS6-unbound reds.
+Set-RoutingVerdict -Root $root -Verdict 'CAN_PATCH'
+Set-ContractField -Path $contract -Key 'bypass_risk' -Value 'core exits when injected key withheld'
+Set-ContractField -Path $contract -Key 'evidence_a_server_issued_material' -Value 'server issues runtime key; launcher injects it'
+Set-ContractField -Path $contract -Key 'evidence_a_core_fails_without_material' -Value 'withholding the key exits the core immediately'
+Set-ContractField -Path $contract -Key 'protection_ceiling' -Value 'UNVERIFIED'
+Set-ContractField -Path $contract -Key 'evidence_path' -Value 'UNVERIFIED'
+Set-ContractField -Path $contract -Key 'evidence_sha256' -Value 'UNVERIFIED'
+Set-ContractField -Path $contract -Key 'verified_tier' -Value 'A'
+Set-ContractField -Path $contract -Key 'claimed_tier' -Value 'A'
+# keep the machine-read summary consistent with the contract so BS5's mismatch gate is not what fires here
+$adapterReqBs = Join-Path $root 'product-state\auth\AUTH-ADAPTER-REQUEST.md'
+$arBsTxt = Get-Content -Raw -Encoding UTF8 -LiteralPath $adapterReqBs
+$arBsTxt = $arBsTxt -replace '(?m)^(\s*claimed_tier:\s*")[^"]*(")', '${1}A${2}' -replace '(?m)^(\s*verified_tier:\s*")[^"]*(")', '${1}A${2}' -replace '(?m)^(\s*bypass_risk:\s*")[^"]*(")', '${1}core exits when injected key withheld${2}'
+[IO.File]::WriteAllText($adapterReqBs, $arBsTxt, (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BS6-tier-A-unbound-evidence-caught' -Text $run.Text -Pattern 'evidence_path \+ evidence_sha256 没有绑定真实产物'
+# Bind a real evidence file -> the F1b gate clears (and grading clears: A + CAN_PATCH + settled + bound).
+$bsBindDir = Join-Path $root 'product-state\artifacts\verification'
+New-Item -ItemType Directory -Force -Path $bsBindDir | Out-Null
+$bsBindFile = Join-Path $bsBindDir 'binding-proof.txt'
+Set-Content -LiteralPath $bsBindFile -Value 'observed: core exits immediately when the launcher-injected key is withheld' -Encoding utf8
+$bsBindHash = (Get-FileHash -LiteralPath $bsBindFile -Algorithm SHA256).Hash
+Set-ContractField -Path $contract -Key 'evidence_path' -Value 'product-state/artifacts/verification/binding-proof.txt'
+Set-ContractField -Path $contract -Key 'evidence_sha256' -Value $bsBindHash
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BS6-bound-evidence-clears' -Text $run.Text -Pattern 'evidence_path \+ evidence_sha256 没有绑定真实产物' -Absent
+
+# BS7 -- F1(a): a verdict meaning the core is unmodifiable caps A/B at C even with bound evidence -- you
+# cannot inject launcher checkpoints into a core you can only resource-overlay. With BS6's bound evidence in
+# place, verdict OVERLAY_ONLY -> tier capped -> binding_strength_backed fires. Revert the expanded cap (only
+# WRAPPER_ONLY) in Test-BindingStrengthEvidence and BS7-overlay reds.
+Set-RoutingVerdict -Root $root -Verdict 'OVERLAY_ONLY'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BS7-overlay-only-caps-A' -Text $run.Text -Pattern 'binding_strength_backed'
+# CAN_PATCH (modifiable core) does NOT cap -> with bound evidence the gate clears (mutation guard: not always-fire).
+Set-RoutingVerdict -Root $root -Verdict 'CAN_PATCH'
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BS7-can-patch-allows-A' -Text $run.Text -Pattern 'binding_strength_backed' -Absent
+
+# BS8 -- F2: the cap must read the verdict scoped to modifiability:, not first-match-anywhere. Real
+# modifiability.verdict WRAPPER_ONLY (should cap) but a stray top-level `verdict: "CAN_PATCH"` at column 0 ->
+# the scoped reader still sees WRAPPER_ONLY and caps. Revert to the unscoped reader and BS8 reds (reads the
+# stray CAN_PATCH, cap bypassed).
+Set-RoutingVerdict -Root $root -Verdict 'WRAPPER_ONLY'
+$bsPp = Join-Path $root 'product-state\PROTECTION-PROFILE.yaml'
+[IO.File]::WriteAllText($bsPp, ("verdict: `"CAN_PATCH`"`n" + (Get-Content -Raw -Encoding UTF8 -LiteralPath $bsPp)), (New-Object Text.UTF8Encoding($false)))
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'BS8-scoped-verdict-still-caps' -Text $run.Text -Pattern 'binding_strength_backed'
 
 # SN -- Windows gives one directory two names: C:\Users\RUNNER~1\x and C:\Users\runneradmin\x.
 # Every containment check in the validator is a string prefix test, so a product reached through
@@ -1509,6 +1596,24 @@ Assert-Match -Name 'SHB1-hint-absent-at-init' -Text $run.Text -Pattern '有界�
 $null = Invoke-Script -Name 'update-product-state.ps1' -ScriptArgs @('-ProductRoot', $root, '-Status', 'BASELINE_CREATED', '-Mode', 'resume')
 $run = Invoke-Script -Name 'start-here.ps1' -ScriptArgs @('-ProductRoot', $root)
 Assert-Match -Name 'SHB2-hint-present-at-analysis' -Text $run.Text -Pattern '有界头脑风暴'
+
+# PSW -- the placeholder sweep must NOT false-positive on evidence under artifacts/ (RV real-target finding:
+# tool-output evidence legitimately carries __X__ constants copied from the target binary, e.g. Tauri's
+# __TAURI_TO_IPC_KEY__), but MUST still catch unfilled scaffold placeholders everywhere else.
+# PSW1 -- an evidence file under artifacts/ with a __X__ token is NOT flagged. Remove the `artifacts\*`
+# exemption in validate-product-state and PSW1 reds.
+$root = New-Fixture -Name 'psw-evidence-artifacts'
+$pswEv = Join-Path $root 'product-state\artifacts\analysis'
+New-Item -ItemType Directory -Force -Path $pswEv | Out-Null
+Set-Content -LiteralPath (Join-Path $pswEv 'evidence.txt') -Value 'tool output: __TAURI_TO_IPC_KEY__ seen in binary' -Encoding utf8
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'PSW1-evidence-artifacts-exempt' -Text $run.Text -Pattern 'artifacts\\analysis\\evidence\.txt' -Absent
+# PSW2 -- control: the SAME token in a swept scaffold file (outside artifacts/) is still caught, so the
+# exemption is scoped to evidence, not a blanket off-switch.
+$root = New-Fixture -Name 'psw-scaffold-still-swept'
+Set-Content -LiteralPath (Join-Path $root 'product-state\reports\CHANGES-AND-DIFF.md') -Value '# changes __FAKE_PLACEHOLDER__' -Encoding utf8
+$run = Invoke-Script -Name 'validate-product-state.ps1' -ScriptArgs @('-ProductRoot', $root)
+Assert-Match -Name 'PSW2-scaffold-placeholder-still-caught' -Text $run.Text -Pattern 'unfilled scaffold placeholders: reports\\CHANGES-AND-DIFF\.md'
 
 $failed = @($script:Results | Where-Object { -not $_.Passed })
 Write-Output ''

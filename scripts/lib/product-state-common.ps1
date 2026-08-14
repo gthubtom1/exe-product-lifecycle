@@ -163,7 +163,12 @@ function Test-BindingStrengthEvidence {
     $ceiling = 3
     $ceilingField = (Get-IndentedYamlScalar -Text $Text -Key 'protection_ceiling').Trim().ToUpperInvariant()
     if ($ceilingField -in @('A', 'B', 'C')) { $ceiling = [Math]::Min($ceiling, $rank[$ceilingField]) }
-    if ($ProtectionVerdict -match '(?i)WRAPPER_ONLY') { $ceiling = [Math]::Min($ceiling, $rank['C']) }
+    # A protection verdict meaning the core CODE cannot be modified caps binding at C: you cannot inject
+    # launcher checkpoints into a core you can only wrap (WRAPPER_ONLY), only resource-overlay (OVERLAY_ONLY),
+    # or have not even opened yet (CONTAINER). Only a modifiable core (CAN_PATCH) or your own source can bear
+    # A/B. (RV auth F1: only WRAPPER_ONLY capped before, so OVERLAY_ONLY/CONTAINER shells recorded strong
+    # binding. The claim must ALSO bind real evidence -- that part is enforced in validate-product-state.)
+    if ($ProtectionVerdict -match '(?i)\b(WRAPPER_ONLY|OVERLAY_ONLY|CONTAINER)\b') { $ceiling = [Math]::Min($ceiling, $rank['C']) }
     if ($rank[$claimed] -gt $ceiling) { return $false }
     $verifiedTier = (Get-IndentedYamlScalar -Text $Text -Key 'verified_tier').Trim().ToUpperInvariant()
     if (($verifiedTier -in @('A', 'B', 'C')) -and ($rank[$verifiedTier] -gt $ceiling)) { return $false }
@@ -495,7 +500,9 @@ function Test-LifecycleRequirement {
             if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
             $bsProtVerdict = ''
             $bsProtPath = Join-Path $StateRoot 'PROTECTION-PROFILE.yaml'
-            if (Test-Path -LiteralPath $bsProtPath -PathType Leaf) { $bsProtVerdict = (Get-IndentedYamlScalar -Text (Read-TextFileSafe -Path $bsProtPath) -Key 'verdict') }
+            # Read the verdict scoped to the modifiability: block (like the layer gate), NOT first-match-
+            # anywhere -- otherwise a stray top-level `verdict:` at column 0 defeats the binding cap. (RV auth F2.)
+            if (Test-Path -LiteralPath $bsProtPath -PathType Leaf) { $bsProtVerdict = (Get-YamlIndentedScalar -Text (Read-TextFileSafe -Path $bsProtPath) -Parent 'modifiability' -Key 'verdict') }
             return (Test-BindingStrengthEvidence -Text (Read-TextFileSafe -Path $full) -UnsettledValues $UnsettledValues -ProtectionVerdict $bsProtVerdict)
         }
         'list_records_have_fields' {
@@ -720,6 +727,28 @@ function Get-YamlIndentedScalar {
         return $value.Trim()
     }
     return ''
+}
+
+function Get-DieContainerSignal {
+    param(
+        [AllowEmptyString()][string]$DieText = '',
+        [AllowEmptyString()][string]$Packer = ''
+    )
+
+    # Which DIE output lines are container/packer signals for Get-ContainerKind. DIE reports real
+    # installers on a DEDICATED "Installer:" line (e.g. "Installer: Nullsoft Scriptable Install
+    # System(3.11)"), NOT on the Protector/Packer line -- so detect-protections, which only read the
+    # Packer line, misclassified a live NSIS 3.11 setup as WRAPPER_ONLY and never routed into its
+    # payload (RV real-target finding). Installers are the most common second-distribution input, so
+    # this is the highest-impact miss. Combine the Packer line and the Installer line; drop the
+    # not-a-signal sentinels so an empty signal stays empty.
+    $parts = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrWhiteSpace($Packer) -and ($Packer -notin @('none-detected', 'unknown'))) { [void]$parts.Add($Packer) }
+    if (-not [string]::IsNullOrWhiteSpace($DieText)) {
+        $installerMatch = [regex]::Match($DieText, '(?im)^\s*Installer:\s*(.+)$')
+        if ($installerMatch.Success) { [void]$parts.Add($installerMatch.Groups[1].Value.Trim()) }
+    }
+    return ($parts -join ' ')
 }
 
 function Get-ContainerKind {

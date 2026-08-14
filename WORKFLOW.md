@@ -229,6 +229,12 @@ engineering.
 `analysis/ROUTE-DECISION.yaml` 里落定一条真实路线，否则 `validate-product-state.ps1` 判红——讨论结束
 不等于完成。
 
+动态行为分析时，若目标带网络授权/激活，先开抓包再触发功能，把请求与响应抓下来还原授权协议：用
+Fiddler / mitmproxy / Wireshark，或把硬编码服务器同长重定向到本地服务器（改 hosts 对付域名、同长
+字节替换对付硬编码 IP）。输入一个随机卡密点激活，就能抓到 `/activate` 的字段（cdk、hwid 等）与
+`/cdk-events` 之类的在线校验通道。仅在你有权测试的目标上这么做；把抓到的协议写进 `auth/AUTH-PROFILE.yaml`
+供授权交接使用。
+
 ### 3. Record customizations as rules
 
 Every requested change must have an ID, category, stable anchor, operation,

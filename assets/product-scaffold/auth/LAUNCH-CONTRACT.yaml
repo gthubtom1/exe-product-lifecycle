@@ -60,6 +60,11 @@ binding_strength:
   evidence_b_core_checkpoint_patched: "UNVERIFIED"    # 核心侧校验改造点的位置与补丁/覆盖记录
   evidence_b_launcher_injected_token: "UNVERIFIED"    # 启动器向核心注入会话凭证的证据
   evidence_c_wrapper_only_ack: "UNVERIFIED"           # 明确承认核心可被直接运行绕过（诚实声明，不是遮掩）
+  # A/B 级（声称强/中绑定）必须绑定一份真实证据文件，和其它反捏造门同规矩：相对 product-state/ 的路径
+  # + 其 sha256，内容是"抽掉启动器注入的材料后核心跑不起来 / 校验点拦截"的实测截图或录屏。仅 C 级免绑
+  # （C = 承认核心可被直接运行绕过，本就没有强绑定可证）。纯文本声称、空文件或哈希不符判失败。
+  evidence_path: "UNVERIFIED"      # 例 product-state/artifacts/verification/binding-proof.png
+  evidence_sha256: "UNVERIFIED"
   verification: "UNVERIFIED"       # 验证命令或受控证据
 verification_refs: []
 open_questions: []
