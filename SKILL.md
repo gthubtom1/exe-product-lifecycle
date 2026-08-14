@@ -38,6 +38,8 @@ Agent 自动负责：识别主程序和说明文件、选择内部产品编号�
 
 This skill owns the complete product lifecycle of a maintained second-distribution product: a Launcher, a separate authorization platform, branding/UI/contact/feature customization, per-product memory, and future upstream synchronization. All analysis, customization, authorization handoff, packaging, verification, and rollback happen inside this product's state.
 
+本技能的入口由路由文件分派进入（`start-here.ps1` 在带 TaskId 参数时验分派标记）。
+
 ### 两条入口（同一套下游生命周期）
 
 这套技能有两条入口，前半段不同、后半段（定制 / 授权 / 发布 / 回滚 / 门禁）完全共用：

@@ -21,11 +21,37 @@ param(
 
     # What the user actually said, in their own words. Used only to separate "report" from "act";
     # when omitted the mode is derived from the directory alone.
-    [string]$UserRequest
+    [string]$UserRequest,
+
+    # Route-Gate task marker (written by route.ps1). When present, the entry verifies it;
+    # when absent, this script keeps its historical parameter-less behavior unchanged.
+    [string]$TaskId
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($PSBoundParameters.ContainsKey('TaskId')) {
+    $gateDir = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".route-gate"
+    if (-not (Test-Path -LiteralPath (Join-Path $gateDir "DISABLED"))) {
+        $activePath = Join-Path $gateDir "active.json"
+        if (-not (Test-Path -LiteralPath $activePath -PathType Leaf)) {
+            Write-Output '这个活还没走分派，我先不直接开工。先运行 route.ps1 领个号（约 1 秒），领完我马上接着干。'
+            exit 1
+        }
+        try {
+            $routeDecision = [System.IO.File]::ReadAllText($activePath) | ConvertFrom-Json
+        }
+        catch {
+            Write-Output '分派标记读不出来，我先不直接开工。先运行 route.ps1 领个号（约 1 秒），领完我马上接着干。'
+            exit 1
+        }
+        if ([string]$routeDecision.task_id -ne $TaskId -or [string]$routeDecision.decision -ne 'exe-product-lifecycle') {
+            Write-Output '这个任务的分派结果不是走我这条流程。先运行 route.ps1 确认分派，它会告诉你走哪条流程。'
+            exit 1
+        }
+    }
+}
 
 # Windows-only, said up front. On PowerShell 7 on macOS/Linux the very next line (dot-sourcing
 # lib\product-state-common.ps1) fails with an opaque "cannot find path", because the PE analysis,
