@@ -113,7 +113,7 @@ product-state/auth/AUTH-INTEGRATION-TESTS.md
 
 生命周期 Skill 读取返回文件后，才决定 Launcher、核心程序和 Adapter 的具体接线。合同未定、错误码未知、成功后启动条件不明或离线行为没有验收标准时，状态保持 `AUTH_HANDOFF_READY` 或 `MIGRATION_REQUIRED`，不要伪装成已接入。
 
-授权平台如果负责推送新包，平台联调还要读取产品的 `release/RELEASE-PUBLISH-REQUEST.md`。生命周期 Skill 只负责本地构建物、组件 Hash/签名、测试和回滚；平台返回产品/Profile/Release/Artifact/Channel 的登记结果后，才更新本地发布状态。
+授权平台如果负责推送新包，平台联调还要读取产品的 `release/RELEASE-PUBLISH-REQUEST.md`。生命周期 Skill 负责本地构建物、组件 Hash/签名、测试和回滚；平台返回产品/Profile/Release/Artifact/Channel 的登记结果后，再更新本地发布状态。
 
 ## 原授权界面的记录方式
 

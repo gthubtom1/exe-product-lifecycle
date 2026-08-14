@@ -17,7 +17,7 @@
 
 ## 给智能体的关键须知（拉下来先看这几条，避免误解）
 
-1. **只在 Windows 上真正运行**（PowerShell 5.1 或 7 都行）。脚本用注册表 / `System32` / Windows 专用分析工具；macOS/Linux 上智能体只能读懂流程、不能执行脚本，`start-here.ps1` 会在非 Windows 上直接明说。
+1. **运行环境：Windows**（PowerShell 5.1 或 7 均可）。脚本用注册表 / `System32` / Windows 专用分析工具；`start-here.ps1` 会按当前平台给出对应提示。
 2. **每一步先跑 `scripts/start-here.ps1`**（只读、可反复跑），照它打印的命令顺序做。顺序写在代码里、不在文档正文里——凭正文推断顺序正是它要防的错（先分析后建档、把"继续维护"当成只汇报）。
 3. **绝不手改 `STATE.yaml` / `PRODUCT-INDEX.md`**，只用 `scripts/update-product-state.ps1`：它按 `assets/lifecycle-states.json` 校验证据、拒绝跳级，并把两份状态文件当一个事务写。手改会让状态互相打架。
 4. **两条入口**：手上没有 EXE 不是死路——用户只有"一句需求"时走源码复用二开（`scripts/init-source-product.ps1`），别张口就要 EXE。也别让一个 EXE 产品谎报 `track: source` 来跳过基线/逆向门（校验器会拦）。
@@ -86,9 +86,9 @@ git -C "$env:USERPROFILE\.codex\skills\exe-product-lifecycle" pull
 
 装完让智能体确认一下装对没有：`SKILL.md`、`WORKFLOW.md`、`scripts/start-here.ps1` 三个都能在那个目录里直接找到就对了。
 
-## Windows 前提
+## 运行前提
 
-- **只能在 Windows 上真正运行。** 40 多个 PowerShell 脚本（`scripts/` 下 42 个 + `scripts/lib/` 5 个共享库）加 16 套自检测试，用到注册表、`System32` 和 Windows 专用分析工具。在 macOS / Linux 上智能体能读懂流程，但脚本会失败。
+- **运行环境：Windows。** 40 多个 PowerShell 脚本（`scripts/` 下 42 个 + `scripts/lib/` 5 个共享库）加 16 套自检测试，使用注册表、`System32` 和 Windows 专用分析工具。
 - **Windows PowerShell 5.1（系统自带）或 PowerShell 7 都可以**，两条通道都在 CI 上跑。
 - **Python 3 只有维护者需要**：仅 `scripts/validate-schema-links.py` 这一个校验脚本用到，日常使用这个 Skill 不需要 Python。
 - **不需要管理员权限**，除非要启动本地临时授权 mock 服务器（`scripts/mock-authorization-server.ps1`）——Windows 的 http.sys 注册本地 URL 通常要管理员或 `netsh` 预留；被拒时脚本会明确区分"权限不足"和"端口被占用"，不会让你白换端口。
@@ -151,7 +151,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/publish-knowledge.ps
 
 | 路径 | 作用 |
 | --- | --- |
-| `SKILL.md` | Skill 入口与路由边界、两条入口、强制 STEP 0、任务自检；智能体从这里开始（Windows 专用，PowerShell 5.1/7） |
+| `SKILL.md` | Skill 入口与适用范围、两条入口、强制 STEP 0、任务自检；智能体从这里开始（PowerShell 5.1/7） |
 | `WORKFLOW.md` | 厂商中立的完整流程：目录树、脚本参数、六种模式、§0–§6 分步 |
 | `scripts/` | 42 个 PowerShell 脚本 + `lib/` 5 个共享库 + 1 个 `validate-schema-links.py`：产品状态机、输入登记、保护探测、工具发现、能力库、授权 mock、知识生命周期、同步/一致性、以及 16 套 `test-*.ps1` 自检 |
 | `assets/` | EXE 轨道状态表 `lifecycle-states.json`（12 态）+ 产品脚手架 `product-scaffold/`；源码复用轨道状态表 `lifecycle-states-source.json`（13 态）+ 源脚手架 `source-scaffold/` |

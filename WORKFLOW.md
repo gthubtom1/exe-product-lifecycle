@@ -1,19 +1,19 @@
 # EXE Product Lifecycle Workflow
 
 This file is the vendor-neutral entry point for agents that do not load Codex
-`SKILL.md`. Load it only when the user asks to maintain, customize, authorize,
-release, or update a Windows EXE product. It is not a global router and it does
-not replace the host agent's own instructions.
+`SKILL.md`. Use it when the user asks to maintain, customize, authorize,
+release, or update a Windows EXE product. It works alongside the host agent's
+own instructions and handles the EXE product lifecycle end to end.
 
 ## 两条入口（前半段不同，后半段共用）
 
 - **黑盒 EXE 入口（默认，本文件其余部分描述的就是它）**：用户交来没有源码的 EXE，逆向理解 → 复刻/定制 → 授权 → 测试 → 发布。用 `scripts/init-product.ps1`，走 `assets/lifecycle-states.json`。
 - **源码复用·二开入口（Phase 2）**：用户只说一个需求，联网找同类开源项目当参考、**学写法而非整包合并**、在用户自己项目里实现，再走**同样的后半段**（定制 / 授权 / 发布 / 回滚）。用 `scripts/init-source-product.ps1`（无需 EXE），`STATE.yaml` 带 `track: source`，走 `assets/lifecycle-states-source.json`：`SOURCE_INTAKE → REFERENCES_GATHERED → CAPABILITY_MAPPED → IMPLEMENTED → 汇入共享下游`。同一个 `validate-product-state.ps1` 按 `track` 选表；EXE 专属检查（基线哈希、core 完整性、逆向 findings 绑定等）对源轨道自动跳过——源码入口本就有源码、不需逆向。源专属门：
   - 学写法不硬合并（核心门）：`source/CAPABILITY-MAP.yaml` 每个能力必须写清 `self_implementation`（自己在本项目怎么实现）——这是"学思路自己写、不是整包搬运"的证据；`reference_ids`（学了谁的写法）可选、想记就记；
-  - 来源登记（可选/建议）：`source/REFERENCE-INVENTORY.yaml` 只需文件在即可，里面登记同类开源参考纯为方便自己回溯，`url`/`commit` 等均为可选、空登记也不拦（本流程学写法、不整包合并，合规/版权不在考虑范围）；
+  - 来源登记（可选/建议）：`source/REFERENCE-INVENTORY.yaml` 只需文件在即可，里面登记同类开源参考纯为方便自己回溯，`url`/`commit` 等均为可选、空登记也不拦（本流程学写法、不整包合并，是否做许可检查由宿主与当前任务按需决定）；
   - 构建/真跑证据：直接沿用共享下游的 `EVIDENCE-LEDGER`（运行期证据绑定真实文件）与 `reports/RUN-EVIDENCE.yaml`（真启动一遍并留截图/录屏）；
-  - 许可证：**不设阻塞式许可证门、也不做许可/版权类默认提醒**（scaffold 里仅保留一句信息性供应链注记：保护你的机器、与版权无关，见下一条）——本流程学别人思路自己写、不整包合并别人代码，上游许可义务基本不触发，合规/版权不在本流程考虑范围；
-  - 供应链：默认**不自动克隆/安装外部依赖、不联网执行外部代码**；只有真去跑或依赖外部代码时才提醒，并先登记来源/版本/许可（在有宿主授权规则时走授权）。
+  - 许可证：本流程没有阻塞式许可证门（scaffold 里仅保留一句信息性供应链注记：保护你的机器、与版权无关，见下一条）。设计前提是学别人思路自己写、不整包合并别人代码，上游许可义务基本不触发；是否做许可检查与版权提醒由宿主与当前任务按需决定；
+  - 供应链：默认在确认后才克隆/安装外部依赖、联网执行外部代码；真正要运行或依赖外部代码时，先说明来源、固定版本和许可（在有宿主授权规则时走授权）。
 
 Load `references/knowledge-lifecycle.md` only when the task asks to reuse cross-product experience or the current product has matching reusable-learning tags. Product evidence stays in that product's `product-state/`; shared candidates are sanitized and reviewed separately. Only `knowledge/verified/` may be queried as an analysis hint, and every match must be reverified on the current EXE.
 
@@ -277,8 +277,8 @@ failure behavior, and whether the original authorization surface remains
 visible or gates the core. A launcher screen alone does not prove the original
 authorization gate has gone away.
 
-The product workflow owns how the EXE is started and verified. The authorization
-platform owns users, products, entitlements, devices, release access, audit, and
+The product workflow records how the EXE is started and verified. The authorization
+platform maintains users, products, entitlements, devices, release access, audit, and
 revocation. Connect them through a product-specific adapter rather than
 hard-coding one EXE's fields into the shared platform.
 
@@ -304,8 +304,8 @@ bad-key-rejected evidence, each `path` + `sha256` pointing at a real file under
 `product-state/`. A typed "it ran" is not evidence -- a screenshot is far harder
 to fabricate, which is what makes this the counter to a self-consistent forgery.
 Also create the component-level release manifest and
-`release/RELEASE-PUBLISH-REQUEST.md`; the platform owns registration, visibility,
-channel push, withdrawal, and publication audit, while this workflow owns the
+`release/RELEASE-PUBLISH-REQUEST.md`; the platform records registration, visibility,
+channel push, withdrawal, and publication audit, while this workflow produces the
 local package and evidence. `RELEASED` additionally requires the platform's
 returned registration recorded in `release/RELEASE-REGISTRATION.yaml`
 (`registration_id`): a self-written publish request alone is a request, not proof

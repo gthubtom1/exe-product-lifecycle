@@ -8,7 +8,7 @@ goal: ""                          # 一句话：要做出什么（用户视角�
 success_criteria: []              # 可判定的成功标准（用户能亲手测的）
 non_goals: []                     # 明确不做，避免范围蔓延
 # distribution 只作信息记录：internal=自用；external=打算对外发布。本流程是"学写法、不整包合并别人代码"，
-# 版权/许可不在本流程考虑范围，不设任何许可证门；只保留一句轻量供应链安全提示（保护机器、非版权，见 REFERENCE-INVENTORY）。
+# 是否做许可检查与版权提醒由宿主与当前任务按需决定，不设任何阻塞式许可证门；只保留一句轻量供应链安全提示（保护机器、非版权，见 REFERENCE-INVENTORY）。
 distribution: "internal"          # internal | external（仅信息记录，无阻塞门）
 notes: ""
 source_of_truth: "product-state/source/SOURCE-INTAKE.yaml"

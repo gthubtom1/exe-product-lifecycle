@@ -1,7 +1,7 @@
 ---
 name: exe-product-lifecycle
-description: "Maintain and evolve a Windows-only EXE second-distribution product: intake an EXE (plus optional installer, DLLs, notes), record and reapply branding/UI/contact/feature customizations, gate entry through a Launcher, hand authorization to a separate licensing platform, and preserve customizations across upstream versions. 用于 EXE 二次发行、Launcher、自建授权衔接、品牌/UI/联系方式/功能定制、每产品独立档案与持续同步。另有源码复用·二开入口(init-source-product.ps1)：一句需求→学同类开源写法(不整包合并)→在自己项目实现→汇入同一套定制/授权/发布/回滚生命周期。Not for one-off binary inspection, unpacking, exploit work, or wholesale source-code migration of an existing app."
-compatibility: "Windows; PowerShell 5.1 or 7; scripts do not run on macOS/Linux"
+description: "Maintain and evolve a Windows EXE second-distribution product: intake an EXE (plus optional installer, DLLs, notes), record and reapply branding/UI/contact/feature customizations, gate entry through a Launcher, hand authorization to a separate licensing platform, and preserve customizations across upstream versions. 用于 EXE 二次发行、Launcher、自建授权衔接、品牌/UI/联系方式/功能定制、每产品独立档案与持续同步。另有源码复用·二开入口(init-source-product.ps1)：一句需求→学同类开源写法(不整包合并)→在自己项目实现→汇入同一套定制/授权/发布/回滚生命周期。"
+compatibility: "Windows; PowerShell 5.1 or 7"
 ---
 
 # EXE Product Lifecycle
@@ -34,22 +34,20 @@ Agent 自动负责：识别主程序和说明文件、选择内部产品编号�
 
 用户不需要知道内部模式名。Agent 自动判断是首次接入、继续更新、查看进度、准备测试包还是回滚；每轮只用中文告诉用户“做完了什么、发现了什么、下一步是什么”。
 
-## Routing boundary
+## 适用范围
 
-Use this skill when the business goal is a maintained second-distribution product with some combination of a Launcher, a separate authorization platform, branding/UI/contact/feature customization, per-product memory, and future upstream synchronization. Delegate one-off PE/.NET/native analysis to the host's analysis skill, but keep the lifecycle result and evidence in this product's state.
-
-Use a generic software-migration skill when the task is ordinary source-based migration, installer maintenance, or release operation without the product-specific second-distribution/customization/Launcher/authorization-sync contract. If both descriptions match, this skill owns the product lifecycle and the other skill supplies only the needed analysis or build capability.
+This skill owns the complete product lifecycle of a maintained second-distribution product: a Launcher, a separate authorization platform, branding/UI/contact/feature customization, per-product memory, and future upstream synchronization. All analysis, customization, authorization handoff, packaging, verification, and rollback happen inside this product's state.
 
 ### 两条入口（同一套下游生命周期）
 
 这套技能有两条入口，前半段不同、后半段（定制 / 授权 / 发布 / 回滚 / 门禁）完全共用：
 
 - **黑盒 EXE 入口（默认）**：用户交来一个没有源码的 EXE，逆向理解 → 复刻/定制 → 授权挂钩 → 测试 → 发布。用 `scripts/init-product.ps1`，走 `assets/lifecycle-states.json`（`INIT → BASELINE_CREATED → ANALYZED → …`）。
-- **源码复用·二开入口（Phase 2）**：用户只说一个需求，联网找同类开源项目当参考、**学写法而不是整包合并**、在用户自己项目里实现，再走同样的后半段。用 `scripts/init-source-product.ps1`（无需 EXE），走 `assets/lifecycle-states-source.json`（`SOURCE_INTAKE → REFERENCES_GATHERED → CAPABILITY_MAPPED → IMPLEMENTED → 汇入共享下游`），由 `STATE.yaml` 的 `track: source` 选表。源码入口本就有源码、**不需要逆向/反编译**；其真实性由构建证据（`EVIDENCE-LEDGER`）和最后真跑门（`reports/RUN-EVIDENCE.yaml`）证明。源专属门：**学写法不硬合并**——每个能力必须写清 `self_implementation`（自己在本项目怎么实现），这是"学思路自己写、不是整包搬运"的核心证据；`reference_ids`（学了谁的写法）可选、想记就记。来源登记只需 `REFERENCE-INVENTORY.yaml` 文件在即可，`url`/`commit` 等均为可选、方便自己回溯，不做缺失必红。**不设阻塞式许可证门、也不做许可/版权类默认提醒**（scaffold 仅保留一句信息性供应链注记：保护机器、与版权无关）——本流程学别人思路自己写、不整包合并别人代码，上游许可义务基本不触发，合规/版权不在本流程考虑范围。供应链默认不自动克隆/安装外部依赖、不联网执行外部代码；只有真去跑或依赖外部代码时才提醒。
+- **源码复用·二开入口（Phase 2）**：用户只说一个需求，联网找同类开源项目当参考、**学写法而不是整包合并**、在用户自己项目里实现，再走同样的后半段。用 `scripts/init-source-product.ps1`（无需 EXE），走 `assets/lifecycle-states-source.json`（`SOURCE_INTAKE → REFERENCES_GATHERED → CAPABILITY_MAPPED → IMPLEMENTED → 汇入共享下游`），由 `STATE.yaml` 的 `track: source` 选表。源码入口本就有源码、**不需要逆向/反编译**；其真实性由构建证据（`EVIDENCE-LEDGER`）和最后真跑门（`reports/RUN-EVIDENCE.yaml`）证明。源专属门：**学写法不硬合并**——每个能力必须写清 `self_implementation`（自己在本项目怎么实现），这是"学思路自己写、不是整包搬运"的核心证据；`reference_ids`（学了谁的写法）可选、想记就记。来源登记只需 `REFERENCE-INVENTORY.yaml` 文件在即可，`url`/`commit` 等均为可选、方便自己回溯，不做缺失必红。**许可证门**：本流程没有阻塞式许可证门（scaffold 里仅保留一句信息性供应链注记：保护机器、与版权无关）。设计前提是学别人思路自己写、不整包合并别人代码，上游许可义务基本不触发；是否做许可检查与版权提醒由宿主与当前任务按需决定。供应链默认在确认后才克隆/安装外部依赖、联网执行外部代码；真正要运行或依赖外部代码时，先说明来源、固定版本和许可。
 
 ## ACTION REQUIRED（第一件事：让脚本告诉你顺序）
 
-> 平台要求：本 Skill 只能在 **Windows** 上运行（PowerShell 5.1 或 7）。它分析 Windows EXE，依赖注册表 / System32 / Windows 专用分析工具；在 macOS / Linux 上只能阅读，脚本无法执行——start-here.ps1 会在非 Windows 上直接给出这一提示。
+> 运行环境：Windows（PowerShell 5.1 或 7）。分析对象是 Windows EXE；工具发现使用注册表 / System32 / Windows 专用分析工具。start-here.ps1 启动时检查当前平台并按平台给出对应提示。
 
 **STEP 0 是强制的。在读取任何产品文件、选择任何模式、回答用户任何问题之前，先运行：**
 
@@ -156,7 +154,7 @@ Each entry needs an ID, type, stable anchor, operation, source/configuration, ap
 
 ### 3. 授权交接
 
-Do not embed a product-specific licensing implementation into this skill. Follow `references/auth-handoff.md` and keep observed authorization facts under `product-state/auth/`. The handoff must separate the product's login/license surface from the real Launcher-to-core process contract, and must record product ID, device data, entitlements, version/offline behavior, failure behavior, and launch conditions. It must also grade launcher-to-core binding strength in `auth/LAUNCH-CONTRACT.yaml` under `binding_strength`: state a claimed tier (A 强绑定：核心运行必需的材料由授权服务器下发 / B 中等：核心校验点已改造为必须由启动器注入 / C 仅外壳：核心可独立运行，启动器只加一道登录门), an honestly measured `verified_tier`, and the `bypass_risk` for that tier. `AUTH_CONTRACT_READY` will not validate until the evidence the claimed tier requires is settled — so a wrapper-only shell can never be recorded as strong binding, and a claim of A that only carries C's wrapper-only acknowledgement is rejected. The separate licensing-system agent returns a versioned contract and adapter specification in the same directory. Never place admin credentials or private signing keys in product reports or client files.
+3. 授权交接：本 Skill 记录观察到的授权事实（`product-state/auth/`）并生成交接资料，独立的授权平台读取后返回版本化合同与适配器规格。交接资料必须把产品的登录/授权界面与真实的 Launcher 到核心进程契约分开，并记录产品 ID、设备数据、权益、版本/离线行为、失败行为和启动条件。还要在 `auth/LAUNCH-CONTRACT.yaml` 的 `binding_strength` 下给 Launcher 到核心的绑定强度定级：写明声称的级别（A 强绑定：核心运行必需的材料由授权服务器下发 / B 中等：核心校验点已改造为必须由启动器注入 / C 仅外壳：核心可独立运行，启动器只加一道登录门）、实测的 `verified_tier`，以及该级别的 `bypass_risk`。`AUTH_CONTRACT_READY` 在声称级别所要求的证据落定之前不会通过——所以一个仅外壳的产品无法被记成强绑定，只带 C 级外壳确认的 A 级声称会被拒绝。独立授权系统的智能体在同一目录返回带版本号的合同与适配器规格。不要把管理员凭据或私钥写进产品报告或客户端文件。
 
 ### 4. 构建和发布
 
@@ -233,7 +231,7 @@ A new Agent or a new conversation must start from `PRODUCT-INDEX.md` and `STATE.
 - Let the licensing service publish release visibility and access rules; let the product workflow build and verify the artifact.
 - Use a product-specific update profile because entrypoint, installer, data migration, elevation, and rollback differ between EXEs.
 - Use numbered Chinese choices only at a real decision gate, and explain each choice without internal jargon.
-- 真实 `VERIFIED`/`RELEASED` 会打印 `EVIDENCE-TRUST`：默认 `self-asserted`——绑定证据哈希自洽但由本流程自产，静态门只能校验哈希，无法证明它真的来自运行/分析本产品，铁心伪造者可造出哈希自洽的假文件（这是静态门的固有上限，不是缺陷）。需要更高保证时用 `validate-product-state.ps1 -RequireAttestation`，要求具名审核人在 `product-state/attestation/ATTESTATION.yaml` 里对当前状态背书（`approved_by` + `attested_status` + `attested_at`），通过后该行变为 `named-attestation by <审核人> (identity NOT verified)`——工具只核对背书记录完整且指向当前状态，不验证签名或身份（一行假名即可写出同样的记录），所以它比 `self-asserted` 多的只是一条具名承诺记录，不是身份核验；真正的身份保证需要外部签名或可信执行，本工具不提供。
+- 真实 `VERIFIED`/`RELEASED` 会打印 `EVIDENCE-TRUST`：默认 `self-asserted`——绑定证据哈希自洽但由本流程自产，静态门校验哈希并保证自洽，哈希自洽的假文件需要铁心伪造者才能造出（静态门以哈希为界）。需要更高保证时用 `validate-product-state.ps1 -RequireAttestation`，要求具名审核人在 `product-state/attestation/ATTESTATION.yaml` 里对当前状态背书（`approved_by` + `attested_status` + `attested_at`），通过后该行变为 `named-attestation by <审核人> (identity NOT verified)`——工具核对背书记录完整且指向当前状态；身份核验与签名由外部签名或可信执行承担。
 
 ## 已知不强校的门（老实标注，避免误伤合法情况）
 
@@ -275,7 +273,7 @@ When no decision is needed, continue to the next safe stage and report the resul
 
 **下游出口**: product-local analysis, customization, authorization handoff, adapter implementation, release packaging, update verification, or rollback.
 
-**同级关联模块**: reverse-engineering skills may provide analysis tools; this skill owns the product lifecycle and durable handoff records.
+**同级关联模块**: this skill owns the full product lifecycle — analysis, customization, authorization handoff, packaging, verification, and rollback — and keeps durable handoff records in this product's state.
 
 ## 任务完成自检（声称完成前 MUST 通过）
 
