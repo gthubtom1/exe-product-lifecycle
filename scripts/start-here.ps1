@@ -49,21 +49,29 @@ if ($PSBoundParameters.ContainsKey('TaskId')) {
             Write-Output '分派标记读不出来，我先不直接开工。先运行 route.ps1 领个号（约 1 秒），领完我马上接着干。'
             exit 1
         }
-        if ([string]$routeDecision.decision -eq 'ask') {
+        $rd = $routeDecision
+        $hasAsk = $null -ne $rd.PSObject.Properties['ask']
+        $hasDecision = $null -ne $rd.PSObject.Properties['decision']
+        $hasTask = $null -ne $rd.PSObject.Properties['task_id']
+        $hasVersion = $null -ne $rd.PSObject.Properties['route_version']
+        $hasStamp = $null -ne $rd.PSObject.Properties['created_at']
+        if ($hasDecision -and [string]$rd.decision -eq 'ask') {
             Write-Output '这个任务的方向还没选定，先把路由那句 1/2/3 回掉。'
             exit 1
         }
-        if ([string]$routeDecision.task_id -ne $TaskId -or [string]$routeDecision.decision -ne 'exe-product-lifecycle') {
+        if ((-not $hasTask) -or (-not $hasDecision) -or [string]$rd.task_id -ne $TaskId -or [string]$rd.decision -ne 'exe-product-lifecycle') {
             Write-Output '这个任务的分派结果不是走我这条流程。先运行 route.ps1 确认分派，它会告诉你走哪条流程。'
             exit 1
         }
-        $routeVersion = [string]$routeDecision.route_version
+        $routeVersion = if ($hasVersion) { [string]$rd.route_version } else { '' }
         if (-not [string]::IsNullOrWhiteSpace($routeVersion) -and $routeVersion -ne '1.0') {
             Write-Output '分派标记的版本和当前路由版本对不上，我先停一下。重新运行 route.ps1（约 1 秒）更新标记，我马上接着干。'
             exit 1
         }
         $routeStamp = $null
-        try { $routeStamp = [DateTime]$routeDecision.created_at } catch { }
+        if ($hasStamp) {
+            try { $routeStamp = [DateTime]$rd.created_at } catch { }
+        }
         if ($null -ne $routeStamp) {
             $alreadyStarted = (Test-Path -LiteralPath (Join-Path $ProductRoot 'product-state\STATE.yaml') -PathType Leaf)
             if (-not $alreadyStarted -and (Get-Date).ToUniversalTime() - $routeStamp -gt [TimeSpan]::FromHours(12)) {
@@ -88,7 +96,12 @@ if (($PSVersionTable.PSVersion.Major -ge 6) -and -not $IsWindows) {
 . (Join-Path $PSScriptRoot 'lib\product-state-common.ps1')
 
 trap {
-    Write-UserFacingFailure -Message $_.Exception.Message -ScriptName 'start-here.ps1' -ErrorRecord $_
+    try {
+        Write-UserFacingFailure -Message $_.Exception.Message -ScriptName 'start-here.ps1' -ErrorRecord $_
+    }
+    catch {
+        Write-Output ('错误: ' + $_.Exception.Message)
+    }
     exit 1
 }
 
