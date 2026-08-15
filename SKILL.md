@@ -1,4 +1,4 @@
-﻿---
+---
 name: exe-product-lifecycle
 description: "Maintain and evolve a Windows EXE second-distribution product: intake an EXE (plus optional installer, DLLs, notes), record and reapply branding/UI/contact/feature customizations, gate entry through a Launcher, hand authorization to a separate licensing platform, and preserve customizations across upstream versions. 用于 EXE 二次发行、Launcher、自建授权衔接、品牌/UI/联系方式/功能定制、每产品独立档案与持续同步。另有源码复用·二开入口(init-source-product.ps1)：一句需求→学同类开源写法(不整包合并)→在自己项目实现→汇入同一套定制/授权/发布/回滚生命周期。"
 compatibility: "Windows; PowerShell 5.1 or 7"
@@ -10,7 +10,7 @@ This is a portable, user-facing workflow for maintaining many Windows EXE produc
 
 ## 零基础入口（默认工作方式）
 
-最少只需要一个程序。支持 EXE、DLL、APK、脚本、安装包等任何程序类型（判据是产品意图：定制/授权/打包/发布，不是文件类型）。把程序放到一个产品文件夹里；安装包、DLL、截图和说明文件有就一起提供，没有也先开始。然后直接用普通话说目标。用户不需要懂 Git、PowerShell、产品编号、适配器、Schema、哈希、测试矩阵或回滚脚本，也不需要自己运行命令。
+最少只需要一个程序。以 EXE 为主；APK/脚本等类型按能力逐步支持（当前入口仍按 EXE 建档，其他类型先问清再走）。把程序放到一个产品文件夹里；安装包、DLL、截图和说明文件有就一起提供，没有也先开始。然后直接用普通话说目标。用户不需要懂 Git、PowerShell、产品编号、适配器、Schema、哈希、测试矩阵或回滚脚本，也不需要自己运行命令。
 
 用户只需要做三件事：
 
@@ -35,7 +35,7 @@ Agent 自动负责：识别主程序和说明文件、选择内部产品编号�
 用户不需要知道内部模式名。Agent 自动判断是首次接入、继续更新、查看进度、准备测试包还是回滚；每轮只用中文告诉用户“做完了什么、发现了什么、下一步是什么”。
 
 
-## 全局工作纪律（与中枢路由规则 10 一致，任何产品任务都生效）
+## 全局工作纪律（与中枢全局工作纪律一致（随宿主指令部署生效），任何产品任务都生效）
 
 1. **Git 强制**：每个产品文件夹首次接入即 git init；每个流程节点（分析完成/定制完成/授权交接/发布/回滚）一次 commit；"核心未修改"类声称必须附 git diff 证据；回滚 = git revert/checkout 真执行并验证。
 2. **保护已有功能**：每次定制修改前记录功能清单与基线哈希；修改后必须验证旧功能未坏（对照清单逐项跑）。
@@ -43,7 +43,7 @@ Agent 自动负责：识别主程序和说明文件、选择内部产品编号�
    - 服务生命周期门：起本地授权服务前查端口占用与归属、起后就绪探测（监听 PID==自己启动的 PID）、写 pidfile、测试结束回收进程；禁止临时 heredoc 另起服务，服务脚本一律产品档案内版本化。
    - 补丁范围门：二进制补丁前枚举目标串全部出现次数、逐处决定改/不改、偏移写进 CUSTOMIZATION-MANIFEST、含 undo 记录；补丁只动必要处。
    - 打包比对门：release 核心哈希 vs 基线哈希不一致即拦，"核心未修改"与磁盘事实必须一致。
-   - 回滚真执行：Rollback.ps1 必须执行还原动作并做还原验证，不是打印说明。
+   - 回滚真执行：回滚脚本（ROLLBACK-RUNBOOK 模板）必须执行还原动作并做还原验证，不是打印说明。
 4. **连续执行**：干到流程节点完成才汇报（每节点 ≤300 字三层输出：一句大白话结论→用户要做的≤3步→我接下来做什么）；歧义必问与纠错出口保留。
 5. **并行**：阶段内独立子任务（隔离安装/静态分析/资源清点/字符串提取为一批；授权观察与 Launcher 开发两线）可并行原生子代理；状态写回永远单写、由主线程执行；"已开子代理"类声称必须附名单。
 ## 适用范围

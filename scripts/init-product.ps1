@@ -87,6 +87,7 @@ foreach ($relative in @($externalDirs) + @($stateDirs | ForEach-Object { Join-Pa
     New-Item -ItemType Directory -Force -Path $path | Out-Null
 }
 
+if (-not (Test-Path -LiteralPath (Join-Path $root ".git"))) { try { git -C $root init 2>$null | Out-Null } catch { } }
 $createdFiles = New-Object System.Collections.Generic.List[string]
 $scaffoldFiles = Get-ChildItem -LiteralPath $scaffold -Recurse -File
 foreach ($file in $scaffoldFiles) {
